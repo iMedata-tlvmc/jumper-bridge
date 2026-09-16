@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Jumper Bridge (POC)",
+  "version": "0.7.15",
+  "description": "Bridges the modern Gecko web app to the legacy Chameleon EHR running in IE mode: intercepts the modern app's window.open() signal URLs and routes each one by the mechanism Jumper uses - folderFrame script execution via the BHO, a new tab, or a native app launch. Can also show Gecko in a side panel beside the Chameleon tab.",
+  "permissions": [
+    "tabs",
+    "webNavigation",
+    "storage",
+    "declarativeNetRequest",
+    "nativeMessaging",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "http://chsw.tasmc.corp/*",
+    "https://inextdata.tasmc.corp/*",
+    "https://dev-inextdata.tasmc.corp/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "http://localhost:5173/*",
+    "internetexplorertabhost://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "block_signal_urls",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Jumper Bridge (POC)"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}

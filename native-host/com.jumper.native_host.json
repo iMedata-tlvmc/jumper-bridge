@@ -1,0 +1,9 @@
+{
+  "name": "com.jumper.native_host",
+  "description": "Jumper native messaging host - relays patient-open commands from the Jumper Bridge extension to the BHO's named pipe inside the live Chameleon IE-mode tab.",
+  "path": "C:\\Dev\\jumper-bridge\\native-host\\bin\\Release\\net472\\JumperNativeHost.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://fmgdkjcbmfkaakgdffcnfcmcllpngemp/"
+  ]
+}
