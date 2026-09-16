@@ -16,8 +16,8 @@
       flex-direction: column;
     }
     #toolbar {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 8px;
       padding: 10px;
       box-sizing: border-box;
@@ -27,15 +27,25 @@
     }
     #toolbar button {
       width: 100%;
-      font-size: 15px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 13px;
       font-weight: 600;
-      padding: 14px 8px;
+      padding: 20px 4px;
+      min-height: 72px;
       cursor: pointer;
       border: none;
       border-radius: 8px;
       color: #fff;
       box-shadow: 0 1px 3px rgba(0,0,0,0.15);
       transition: background 0.15s ease, transform 0.05s ease;
+    }
+    #toolbar button .icon {
+      font-size: 26px;
+      line-height: 1;
     }
     #toolbar button:active {
       transform: scale(0.98);
@@ -65,7 +75,10 @@
       background: #b91c1c;
     }
     #toolbar #btnToggleFrame {
+      grid-column: 1 / span 2;
       width: 100%;
+      flex-direction: row;
+      min-height: 0;
       background: #e5e7eb;
       color: #1f2937;
       border: 1px solid #9ca3af;
@@ -111,10 +124,10 @@
 </head>
 <body>
   <div id="toolbar">
-    <button id="btnChameleon">Chameleon</button>
-    <button id="btnConsultations">מאושפזים רפואה</button>
-    <button id="btnNursing">מאושפזים סיעוד</button>
-    <button id="btnEr">מלר"ד</button>
+    <button id="btnChameleon"><span class="icon">🦎</span>Chameleon</button>
+    <button id="btnConsultations"><span class="icon">🩺</span>מאושפזים רפואה</button>
+    <button id="btnNursing"><span class="icon">💉</span>מאושפזים סיעוד</button>
+    <button id="btnEr"><span class="icon">🚑</span>מלר"ד</button>
     <button id="btnToggleFrame" title="Hide preview">הסתר תצוגה מקדימה</button>
   </div>
   <iframe id="frame" referrerpolicy="no-referrer-when-downgrade"></iframe>
