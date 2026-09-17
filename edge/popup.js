@@ -69,6 +69,12 @@ document.getElementById("displayMode").addEventListener("change", async (e) => {
   log(`setDisplayMode("${mode}")`, res);
 });
 
+document.getElementById("patientOpenMode").addEventListener("change", async (e) => {
+  const mode = e.target.value;
+  const res = await send({ type: "setPatientOpenMode", mode });
+  log(`setPatientOpenMode("${mode}")`, res);
+});
+
 document.getElementById("btnOpenSidePanel").addEventListener("click", async () => {
   // Called DIRECTLY here rather than round-tripping through background.js:
   // chrome.sidePanel.open() requires a user gesture and the gesture does NOT
@@ -96,6 +102,9 @@ document.getElementById("btnOpenSidePanel").addEventListener("click", async () =
     }
     if (res.result.geckoDisplayMode) {
       document.getElementById("displayMode").value = res.result.geckoDisplayMode;
+    }
+    if (res.result.patientOpenMode) {
+      document.getElementById("patientOpenMode").value = res.result.patientOpenMode;
     }
   }
 })();

@@ -581,3 +581,217 @@ given IE mode's end-of-support timeline this has to be faced eventually regardle
 DECISION: ship with the BHO for now; raise the login.asp bug with the vendor in parallel,
 since that single server-side fix is what unlocks a genuinely BHO-less, install-free product.
 
+
+### 2026-09-17 16:30 — H1 DISPROVEN: declarativeNetRequest does NOT reach IE-mode traffic
+
+Question (task-bho-less-patient-open.md, H1): could DNR rewrite Chameleon's internal
+`SearchPatient?...Patient=<nationalID>...&PatientID=0` request and kill the alert?
+Answer: NO. IE-mode tabs do not traverse Chromium's network stack at all.
+
+Experiment (extension 0.7.18, temporary rules 3/4/5 in `edge/rules.json`), all on
+non-existent 404 paths so nothing could be polluted:
+- rule 3  redirect  chsw.tasmc.corp + urlFilter `jumper-dnr-probe-R` -> `.../jumper-dnr-probe-HIT.html`
+- rule 4  block     chsw.tasmc.corp + urlFilter `jumper-dnr-probe-B`
+- rule 5  redirect  inextdata.tasmc.corp (Chromium control, identical rule shape)
+All three listed main_frame, sub_frame, xmlhttprequest, script, image, other.
+
+| Test | Address bar | jumper-bho.log |
+|---|---|---|
+| rule 5, Chromium control | `-R.html` -> **`-HIT.html`** | n/a |
+| rule 3, IE mode | stayed `-R.html`, IIS 404 page | `[pid=20656] BeforeNavigate2 URL='http://chsw.tasmc.corp/jumper-dnr-probe-R.html'` + `DocumentComplete` same URL. `-HIT` appears nowhere in the log. |
+| rule 4, IE mode | IIS 404 page, NOT ERR_BLOCKED_BY_CLIENT | `[pid=26044] BeforeNavigate2` + `DocumentComplete URL='http://chsw.tasmc.corp/jumper-dnr-probe-B.html'` |
+
+The control proves the ruleset was live and correctly formed. In IE mode the redirect
+never fired, and the **block did not stop the request** — the IIS 404 body proves it
+reached the server. Independently, the fact that these URLs appear in `jumper-bho.log`
+at all (with a pid) proves they were fetched by Trident inside `iexplore.exe`.
+
+=> Edge IE mode fetches through WinINET, outside Chromium's network stack. DNR (and by
+extension `webRequest`) cannot see, block, redirect or header-modify IE-mode requests.
+Tested at `main_frame`; subresources follow a fortiori (the document itself never touched
+the Chromium stack) but were not separately tested.
+
+Corollary: `rules.json` rule 1 (block bare-host `chsw` signal URLs) only ever fires for
+the **Chromium** tab that calls `window.open()` — which is correct and sufficient, since
+that is where the modern app runs. It would not fire for an IE-mode tab.
+
+Probe rules 3/4/5 are temporary and must be removed before this work is committed.
+
+### 2026-09-17 16:45 — H4 CLOSED (not empirically tested): Chameleon needs IE mode
+
+Per user (domain knowledge, not evidenced in this session's logs): Chameleon cannot be
+rendered by a modern Chromium engine — legacy JS plus **ActiveX**. ActiveX alone is
+decisive: Chromium has no ActiveX host, so there is no partial-success path.
+The Chrome-based render test was therefore not run.
+
+Supporting environment fact established while scoping the test: Edge forces IE mode for
+the whole host via policy `InternetExplorerIntegrationSiteList` -> `https://iemode/sites.xml`,
+which contains `<site url="chsw.tasmc.corp"><open-in>IE11</open-in></site>` (and `chsw`,
+and `chsw.tasmc.corp/chameleon`). Confirmed incidentally by the H1 probe: even a bogus
+404 path under chsw.tasmc.corp was handled by Trident (it appears in jumper-bho.log with
+a `[pid=]`). So Edge cannot be used to test Chromium rendering of Chameleon.
+
+Other endpoints probed session-free the same day (Invoke-WebRequest, no browser):
+| Endpoint | Result |
+|---|---|
+| `/ChameleonNET/` , `/ChameleonNET/NET/` | 302 -> `/ChameleonNET/PermissionDenied.aspx` — the modernised branch EXISTS but this account has no permission |
+| `http://chsw-qa.tasmc.corp/chameleon/` | 200 — a QA Chameleon exists; candidate sandbox for session-polluting experiments instead of production |
+| `http://chs-readonly.tasmc.corp/chameleon/` | connection failure |
+| `/Chameleon/` | 200, a 789-byte shim that `window.open`s `/Chameleon/Account/LogOn` |
+
+Worth noting for H2/H3: a session-free GET of
+`/Chameleon/Asp/Navigation/SearchPatient?Patient=9003397574&PatientID=9003397574&idnum=332747500&QuickOpen=1&Hospital=101`
+returns 302 to
+`/Chameleon/Account/Logon?ReturnUrl=%2fChameleon%2fAsp%2fNavigation%2fSearchPatient%3f...&Patient=9003397574&PatientID=9003397574&idnum=332747500&QuickOpen=1&Hospital=101`
+i.e. it **preserves `PatientID` and `idnum` verbatim** and adds a `ReturnUrl`. That is a
+different shape from the bare `Account/LogOn` GET tested on 2026-09-16 (no ReturnUrl),
+so the earlier "LogOn ignores Patient" finding does not automatically apply here.
+
+### 2026-09-17 16:47 — H2 INCONCLUSIVE; but SearchPatient is proven unusable as an entry point
+
+Ran the two SearchPatient variants as top-level navigations in the already-logged-in
+IE-mode tab (user pasted them; extension 0.7.18).
+
+| # | Patient | PatientID | idnum | Rendered | Alert |
+|---|---|---|---|---|---|
+| H2a (control) | 332747500 (national ID) | 0 | (empty) | blue background only | NONE |
+| H2b (hypothesis) | 9003397574 (PatientNum) | 9003397574 | 332747500 | blue background only | NONE |
+
+BHO log evidence — each produced exactly ONE BeforeNavigate2 + DocumentComplete and
+NOTHING downstream:
+
+    16:47:34 [pid=26044] [BeforeNavigate2]  .../SearchPatient?Logout=0&Patient=332747500&...&PatientID=0&QuickOpen=1&idnum=&...
+    16:47:34 [pid=26044] [DocumentComplete] (same URL)
+    16:47:44 [pid=26044] [BeforeNavigate2]  .../SearchPatient?Logout=0&Patient=9003397574&...&PatientID=9003397574&QuickOpen=1&idnum=332747500&...
+    16:47:44 [pid=26044] [DocumentComplete] (same URL)
+
+Contrast with a genuine shell load captured in the same log at 16:47:07-09, which fires
+BlankData x8, SyncPatient.aspx, Definitions, Heading, SessionTimer, Logo, SearchPatient,
+HospPatientListMain, HospPatientList, then Home/Main.
+
+**The control did not reproduce the alert**, so the lookup code never ran in either case.
+=> H2's actual question ("does SearchPatient honour PatientID?") is STILL UNANSWERED.
+Do not record H2 as a negative.
+
+What IS proven: `SearchPatient` is not a usable top-level entry point at ANY parameter
+combination. In the real shell it is a FRAME inside the `Home/Main` frameset, loaded with
+`Patient=` and `QuickOpen=` both EMPTY (16:47:08.12):
+    .../SearchPatient?Logout=0&Patient=&Unit=&...&PatientID=0&QuickOpen=&idnum=&isLogonRecordOpen=False
+Loaded top-level it is an inert leaf document (the blue background). Note also that
+`Home/Main` is the frameset root — its DocumentComplete fires LAST, after all the frames.
+This corrects the earlier "Home/Main standalone = broken single frame" note: the issue is
+missing ASP Session priming, not the URL.
+
+Consistent conclusion across H2 and 2026-09-16: the QuickOpen flow is driven by ASP
+**Session state**, which only `login.asp` can set — which is why only the verbatim URL works.
+
+### 2026-09-17 17:04 — POST-into-account/logon lever: mechanics work, experiment inconclusive
+
+`decisions.md` (2026-09-16 21:20) dismissed the `Patient`-via-POST lever with "would need a
+cross-site POST into the IE-mode tab, which the extension cannot inject". That dismissal is
+**wrong on the mechanics** and was never tested. Tested now.
+
+Method: hand-built `C:\Temp\jumper-post-probe.html` replicating login.asp's own form verbatim
+(`action=/Chameleon/account/logon method=post`, fields ReturnUrl/QuickOpen/Id/UserName/Password/
+Domain/Patient/User_Code/computer/VisitDate/AdmissionNo/AuxCode/Diary/NumOfAttempts), opened via
+"Reload in Internet Explorer mode" (policy `InternetExplorerIntegrationLocalFileAllowed=1`) so the
+POST goes out on WinINET. V2 = control (Patient=""), V1 = hypothesis (Patient=<PatientNum>).
+
+Result: BOTH produced a login page, then the department page. No alert, no patient.
+
+BHO log (the POST arrived in pid 26044, the EXISTING Chameleon process — not the probe's own
+pid 7260/24720):
+
+    17:02:50 [pid=26044] [BeforeNavigate2]  http://chsw.tasmc.corp/Chameleon/account/logon
+    17:02:50 [pid=26044] [DocumentComplete] http://chsw.tasmc.corp/Chameleon/account/logon
+    17:02:55 [pid=26044] [BeforeNavigate2]  .../account/logon                     <- user's credentials
+    17:02:55 [pid=26044] [BeforeNavigate2]  .../SearchPatient?Logout=0&Patient=&...&PatientID=0&QuickOpen=&idnum=&isLogonRecordOpen=False
+    17:02:57 [pid=26044] [DocumentComplete] .../Home/Main?pReloginByUserRecord=0&PatientID=0&...
+
+Findings:
+1. A cross-document POST originated outside the IE-mode tab DOES survive into IE mode and is
+   delivered to the Chameleon process. The mechanism is available.
+2. But `account/logon` answered it with the **login form**: our POST presented empty
+   UserName/Password and `User_Code=-2`, so it was treated as a fresh login attempt instead of
+   reusing the live session. Cost: the user was logged out and had to re-authenticate.
+3. After re-login the follow-up `SearchPatient` carried `Patient=` and `QuickOpen=` EMPTY — the
+   QuickOpen intent was lost entirely.
+
+=> The control (V2) did not reproduce the alert, so nothing can be concluded about `Patient`.
+
+**Why both H2 and this run failed the same way — the unifying explanation:**
+the alert is NOT a function of the query string / POST body alone. It requires the ASP **Session**
+QuickOpen state that only `login.asp` sets. H2a had no such state (hence no alert, inert page);
+the POST run wiped it. Any test that does not go through `login.asp` cannot reach the alert path,
+and any test that DOES go through `login.asp` has already fired the alert. That is a closed loop.
+
+This is the mechanical reason the 2026-09-16 conclusion stands, and it is stronger than the
+reasoning given there.
+
+### 2026-09-17 17:16 — POST lever CLOSED (credential-free variant also fails)
+
+Follow-up to 17:04. Hypothesis was that the login form appeared only because our POST carried
+empty UserName/Password/User_Code=-2. Retested credential-free (V6: ReturnUrl, QuickOpen=1,
+Id=<nationalID>, Patient="" — nothing else).
+
+Result: identical. Login page, then department page. No alert, no patient.
+
+    17:16:14 [pid=26044] [BeforeNavigate2]  http://chsw.tasmc.corp/Chameleon/account/logon
+    17:16:15 [pid=26044] [DocumentComplete] http://chsw.tasmc.corp/Chameleon/account/logon
+    17:16:22 [pid=26044] [BeforeNavigate2]  .../SearchPatient?Logout=0&Patient=&...&PatientID=0&QuickOpen=&idnum=&isLogonRecordOpen=False
+    17:16:24 [pid=26044] [DocumentComplete] .../Home/Main?pReloginByUserRecord=0&PatientID=0&...
+
+Likely mechanism (INFERENCE — not directly evidenced): the probe page ran in its own IE-mode
+process (pid=10380 this run, 7260/24720 the previous run) and IE session cookies are per-process,
+so the POST was issued without Chameleon's session cookie even though the navigation was handed
+to the session-owning process (pid=26044). Consistent with the server answering a
+login form while pid 26044 demonstrably held a live session in the same log.
+
+To originate the POST *inside* the session-owning process you must script that tab — which is
+exactly what requires the BHO. Circular. This reaches the same conclusion as 2026-09-16 21:20 but
+by mechanism rather than assumption, and it corrects that entry's claim that the POST "cannot be
+injected": it CAN be injected and is delivered to the right process; it just cannot carry the session.
+
+=> For an extension-only solution the alert is unavoidable. CLOSED.
+
+### 2026-09-17 17:25 — SESSION SUMMARY: extension-only patient open is possible but NOT alert-free
+
+Worked through `docs/task-bho-less-patient-open.md`. Net result:
+
+| Hypothesis | Verdict | Basis |
+|---|---|---|
+| H1 — rewrite SearchPatient via declarativeNetRequest | **DISPROVEN** | direct experiment, BHO log |
+| H2 — does SearchPatient honour `PatientID`? | **UNANSWERABLE** (control never reached the code path) | BHO log |
+| H3 — another server-side deep link | none found; `/ChameleonNET/*` cannot even be enumerated (identical 302 for real and invented paths) | probe table |
+| H4 — Chameleon under Chromium | **CLOSED** on user domain knowledge (ActiveX). Not tested by me. | user |
+| POST into `account/logon` (new lever, not in the task doc) | **CLOSED** — reaches the right process, cannot carry the session | BHO log |
+| H5 — URL fallback behind a flag | **IMPLEMENTED** (extension 0.7.19, `patientOpenMode`, default `bho`) | code |
+
+**The single governing fact, now established by mechanism rather than assumption:**
+Edge IE mode fetches through WinINET, entirely outside Chromium's network stack. Combined with
+the previously-proven facts that `chrome.scripting`/`chrome.debugger` cannot touch IE-mode
+documents and that external COM/UIA automation of the IE-mode tab is impossible, this means:
+
+> **Nothing outside the IE-mode tab can observe, modify, or script what happens inside it.
+> The BHO is the only foothold, and it is an in-process one.**
+
+Every remaining avenue therefore has to either (a) not touch the IE-mode tab at all, or
+(b) get Chameleon to do the work using its own code, triggered by a plain navigation.
+(b) is what `login.asp?quickOpen=1` does — and it always raises
+`מטופל/ת לא נמצא/ה במערכת` first, because of a server-side parameter-mapping bug we cannot
+reach. That alert is the entire remaining gap between "extension-only works" and
+"extension-only is good enough to ship".
+
+**Corrections this session makes to earlier entries:**
+- 2026-09-16 21:20 said a POST "cannot be injected" by the extension. Wrong: it CAN be, and is
+  delivered to the live Chameleon process. It simply cannot carry that process's session.
+- 2026-09-16 said `Home/Main` standalone is a "broken single frame". It is actually the frameset
+  ROOT (its DocumentComplete fires last, after all child frames). The failure was missing ASP
+  Session priming, not the URL.
+- `handoff.md` §8.7 says there is no way to validate JS locally. Headless **Chrome**
+  (`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe --headless --dump-dom`) works on
+  this machine and was used to unit-test the URL-rewrite helper. `pip install esprima` also gives
+  a usable JS syntax check (normalise `catch {` -> `catch (e) {` first; esprima predates optional
+  catch binding).
+
+Temporary H1 probe rules (rules.json ids 3/4/5) have been REMOVED; rules.json is back to ids 1/2.

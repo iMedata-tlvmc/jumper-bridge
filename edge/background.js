@@ -453,6 +453,63 @@ async function getDisplayMode() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// H5 fallback: BHO-free patient open (storage key "patientOpenMode")
+//
+//   "bho" - default, proven. Pipes OpenPatientRecord to the BHO.
+//   "url" - navigates the Chameleon tab to the modern app's own signal URL with
+//           the host rewritten from bare `chsw` to `chsw.tasmc.corp`. login.asp
+//           carries PatientNum/MedicalRecord/Unit/RecordChar/AdmissionDate
+//           through ASP Session state and the correct patient DOES open.
+//
+// The "url" mode exists only for machines where the BHO cannot be registered
+// (no admin, or IE mode unavailable). It is DEGRADED, knowingly:
+//   - a spurious `מטופל/ת לא נמצא/ה במערכת` alert fires on EVERY open and must
+//     be dismissed before the correct page shows. This is a server-side bug in
+//     login.asp (it puts the national ID into SearchPatient's `Patient` slot,
+//     which expects the PatientNum, and hardcodes PatientID=0). Proven
+//     unfixable from the extension - see docs/decisions.md 2026-09-16 and
+//     2026-09-17 (H1 disproven: declarativeNetRequest cannot see IE-mode
+//     traffic at all, so the request cannot be rewritten in flight).
+//   - ~2s full Chameleon shell reload instead of an in-place frame swap, which
+//     loses whatever the user had open.
+//   - does NOT cover the modal links (OrdersForApprove) or dept-tab detection;
+//     those still require the BHO.
+// Do not make this the default without a vendor fix to login.asp.
+const DEFAULT_PATIENT_OPEN_MODE = "bho";
+
+async function getPatientOpenMode() {
+  try {
+    const { patientOpenMode } = await chrome.storage.local.get("patientOpenMode");
+    return patientOpenMode === "url" ? "url" : DEFAULT_PATIENT_OPEN_MODE;
+  } catch {
+    return DEFAULT_PATIENT_OPEN_MODE;
+  }
+}
+
+async function setPatientOpenMode(mode) {
+  return wrap(async () => {
+    const value = mode === "url" ? "url" : "bho";
+    await chrome.storage.local.set({ patientOpenMode: value });
+    appendLog({ event: "patientOpenMode.set", mode: value });
+    return { patientOpenMode: value };
+  });
+}
+
+// Rewrites the dotless signal host to the real FQDN. The dotless form is what
+// rules.json rule 1 blocks; the FQDN form is a different requestDomain, so the
+// block does not follow the rewrite.
+function signalUrlToChameleonUrl(sourceUrl) {
+  try {
+    const u = new URL(sourceUrl);
+    if (u.hostname !== "chsw") return null;
+    u.hostname = "chsw.tasmc.corp";
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 async function handleDeptTabState(active) {
   if (active && !deptTabLastActive) {
     appendLog({ event: "deptTab.transition", to: active });
@@ -629,6 +686,34 @@ async function routePatientOpenViaBho(patientCmd) {
   }
 }
 
+// H5 fallback path. Navigates the existing Chameleon tab (or a new one) to the
+// signal URL with the host rewritten to the FQDN. Never touches the BHO or the
+// native host, so it still works with bho-poc/ and native-host/ deleted.
+// Expect the spurious "patient not found" alert - see DEFAULT_PATIENT_OPEN_MODE.
+async function routePatientOpenViaUrl(sourceUrl, patientCmd) {
+  const url = signalUrlToChameleonUrl(sourceUrl);
+  if (!url) {
+    appendLog({ event: "patientOpen.url.badSignalUrl", sourceUrl });
+    return { ok: false, error: "signal URL host is not the bare `chsw` form" };
+  }
+
+  const tabs = await chrome.tabs.query({ url: `${CHAMELEON_BASE_URL}/*` });
+  const chameleonTab = tabs[0];
+  try {
+    if (chameleonTab) {
+      await chrome.tabs.update(chameleonTab.id, { url, active: true });
+      await chrome.windows.update(chameleonTab.windowId, { focused: true });
+    } else {
+      await chrome.tabs.create({ url });
+    }
+    appendLog({ event: "patientOpen.url.navigated", url, patientCmd });
+    return { ok: true, mode: "url", url };
+  } catch (err) {
+    appendLog({ event: "patientOpen.url.failed", url, error: String(err) });
+    return { ok: false, error: String(err) };
+  }
+}
+
 // Executes a routing decision from buildChameleonTarget. Each branch mirrors the
 // corresponding Chameleon.cs handler - see that function's comment for why the
 // mechanism, not just the URL, matters.
@@ -779,13 +864,23 @@ async function maybeInterceptModernPopup(tabId, url) {
   const patientCmd = matchPatientCommand(url);
   if (patientCmd) {
     handledPopupTabIds.add(tabId);
-    appendLog({ event: "bridge.intercepted", tabId, sourceUrl: url, label: "OpenPatientRecord(BHO)" });
+    const patientOpenMode = await getPatientOpenMode();
+    appendLog({
+      event: "bridge.intercepted",
+      tabId,
+      sourceUrl: url,
+      label: patientOpenMode === "url" ? "OpenPatientRecord(URL fallback)" : "OpenPatientRecord(BHO)"
+    });
     try {
       await chrome.tabs.remove(tabId);
     } catch (e) {
       // tab may already be gone
     }
-    await routePatientOpenViaBho(patientCmd);
+    if (patientOpenMode === "url") {
+      await routePatientOpenViaUrl(url, patientCmd);
+    } else {
+      await routePatientOpenViaBho(patientCmd);
+    }
     return true;
   }
 
@@ -858,13 +953,15 @@ async function setHospitalId(hospitalId) {
 
 async function getSettings() {
   return wrap(async () => {
-    const { hospitalId, geckoDisplayMode } = await chrome.storage.local.get([
+    const { hospitalId, geckoDisplayMode, patientOpenMode } = await chrome.storage.local.get([
       "hospitalId",
       "geckoDisplayMode",
+      "patientOpenMode",
     ]);
     return {
       hospitalId: hospitalId || "101",
       geckoDisplayMode: geckoDisplayMode === "sidePanel" ? "sidePanel" : "tab",
+      patientOpenMode: patientOpenMode === "url" ? "url" : "bho",
     };
   });
 }
@@ -892,6 +989,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       case "setDisplayMode":
         sendResponse(await setDisplayMode(msg.mode));
+        break;
+      case "setPatientOpenMode":
+        sendResponse(await setPatientOpenMode(msg.mode));
         break;
       case "openChameleonTab":
         sendResponse(await wrap(() => openChameleonTab()));

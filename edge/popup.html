@@ -55,6 +55,18 @@
       closed when מחלקות fires, we fall back to focusing the Gecko tab.</span>
   </div>
 
+  <div class="row">
+    <select id="patientOpenMode" style="max-width:220px">
+      <option value="bho">Patient open via BHO (default)</option>
+      <option value="url">Patient open via URL (degraded)</option>
+    </select>
+    <span class="hint">URL mode is a fallback for machines where the BHO cannot be registered.
+      It works, but a spurious "מטופל/ת לא נמצא/ה במערכת" alert fires on <b>every</b> open and must be
+      dismissed, the whole Chameleon shell reloads (~2s, losing app state), and it does not cover
+      OrdersForApprove or מחלקות detection. The alert is a server-side login.asp bug that cannot be
+      fixed from the extension — see docs/decisions.md.</span>
+  </div>
+
   <h3>3. Simulate modern app window.open()</h3>
   <div class="row">
     <select id="simSelect" style="flex:1">

@@ -96,7 +96,7 @@ rebuilding both projects.**
 
 | Component | State |
 |---|---|
-| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.7.0**. Routing complete, Phase-1 probe UI removed, `scripting`/`debugger`/`cookies` permissions dropped. Side panel done and tested. |
+| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.7.19**. Routing complete, Phase-1 probe UI removed, `scripting`/`debugger`/`cookies` permissions dropped. Side panel done and tested. |
 | Native host `C:\Dev\jumper-bridge\native-host` | builds clean, duplex `EXEC_SCRIPT`. |
 | BHO `C:\Dev\jumper-bridge\bho-poc` | `BhoObject.cs` ~1730 lines (was 1997). Builds clean. |
 | Shared `C:\Dev\jumper-bridge\shared` | `BridgeProtocol.cs`, linked into both C# projects. |
@@ -120,7 +120,7 @@ legacy behaviour: `jumper\Chameleon.cs` / `Gecko.cs`; patterns in `Common.cs` 36
 
 | Hebrew / name | Pattern | Chameleon page | Route `kind` |
 |---|---|---|---|
-| (patient row click) | `patient` | `OpenPatientRecord(...)` | BHO pipe |
+| (patient row click) | `patient` | `OpenPatientRecord(...)` | BHO pipe (or URL fallback, §4.1) |
 | הוראות לתרופות | `medOrder` | `MedOrdersFrm.aspx` (needs `&Sector=`) | `newTab` |
 | OrdersForApprove | `ordersForApprove` | `MedOrders4Approve.aspx?...&Stam=stam` | `script` (modal) |
 | מאזן נוזלים | `fluidBalance` | `FluidBalanceFrm.aspx` | `newTab` |
@@ -133,6 +133,33 @@ legacy behaviour: `jumper\Chameleon.cs` / `Gecko.cs`; patterns in `Common.cs` 36
 > **Identity gotcha:** הוראות לתרופות is `medOrder`, **not** `ordersForApprove`
 > (that's the "unconfirmed instructions" book icon on a patient row). Confirm
 > from the native-host log payload, not the Hebrew label.
+
+### 4.1 Patient open has a second, degraded mode (off by default)
+
+`chrome.storage.local` key **`patientOpenMode`**: `"bho"` (default) | `"url"`,
+toggled in the popup's Settings section. `"url"` replaces the BHO pipe with
+`chrome.tabs.update(chameleonTab, { url })` pointing at the modern app's own
+signal URL with the host rewritten from bare `chsw` to `chsw.tasmc.corp`. It
+needs no BHO, no native host, no COM and no admin — it is the fallback for
+machines where the BHO cannot be registered.
+
+**It is genuinely degraded, and that is not fixable from the extension:**
+
+- a spurious `מטופל/ת לא נמצא/ה במערכת` alert on **every** open. `login.asp`
+  puts the national ID into `SearchPatient`'s `Patient` slot (which expects the
+  PatientNum) and hardcodes `PatientID=0`. Server-side vendor bug.
+- ~2 s full Chameleon shell reload instead of an in-place frame swap; app state
+  is lost.
+- does not cover `OrdersForApprove` (modal) or מחלקות dept-tab detection —
+  those still require the BHO.
+
+**Do not try to fix the alert by rewriting the request.** Proven 2026-09-17:
+`declarativeNetRequest` cannot see IE-mode traffic at all — a `block` rule on a
+`chsw.tasmc.corp` URL did not stop an IE-mode navigation (the server's 404 body
+came back), while the identical rule shape redirected correctly in a Chromium
+tab. IE mode fetches through WinINET, outside Chromium's network stack. This
+also means `webRequest` is equally useless there. Full evidence in
+`docs/decisions.md` (2026-09-17).
 
 **Why most links are `newTab`, not modals:** `showModalDialog` works in IE
 mode, but renders inside the (unfocused) Chameleon tab, so a click from the
@@ -228,8 +255,23 @@ Framing succeeded with just the header strip — no `<meta>`-delivered
 
 ## 7. Proven limitations — do not re-investigate
 
-- `chrome.scripting.executeScript` and `chrome.debugger`/CDP **cannot** touch
-  IE-mode content.
+- **Nothing outside an IE-mode tab can observe, modify or script what happens
+  inside it.** Three independent mechanisms were tested and all fail:
+  - `chrome.scripting.executeScript` and `chrome.debugger`/CDP cannot touch
+    IE-mode content.
+  - `declarativeNetRequest` (and therefore `webRequest`) cannot see IE-mode
+    requests **at all** — proven 2026-09-17: a `block` rule did not stop an
+    IE-mode navigation (the server's own 404 body came back), while the
+    identical rule shape redirected correctly in a Chromium tab. IE mode
+    fetches through WinINET, outside Chromium's network stack.
+  - External COM/ROT/oleacc/UIA automation of the IE-mode tab returns nothing
+    (proven 2026-09-16, with UAC disabled so they are real failures).
+
+  The in-process BHO is the only foothold. A cross-document **POST** can be
+  delivered into the live Chameleon process (proven 2026-09-17, correcting an
+  earlier claim), but it cannot carry that process's session, so it is not a
+  way in either.
+
 - An iframe inside an IE-mode page is rendered by **Trident**, not Chromium —
   there is no way to get Chromium rendering inside an IE-mode tab's DOM. This
   is why real Jumper uses a native WebView2 control, not an HTML overlay.
@@ -326,9 +368,14 @@ confirm Settings loads (proves the native host + pipe round-trip).
   doesn't self-restart. No re-registration needed.
 - `JumperNativeHost.exe` is respawned every 1.5 s by the extension's poll —
   run a background loop that kills it every ~150 ms for the build's duration.
-- No Node.js on this machine (nodejs.org blocked, headless Edge `--dump-dom`
-  empty) — validate JS by brace/paren counting + `ConvertFrom-Json` on the
-  manifest, then load unpacked.
+- **JS can be validated locally** (this corrects an earlier note that it
+  couldn't): headless **Chrome** works even though headless Edge `--dump-dom`
+  came back empty —
+  `& 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe' --headless --dump-dom file:///…`
+  will run a script and let you read the result out of `document.title`. For a
+  pure syntax check, `pip install esprima` then parse each file, normalising
+  `catch {` → `catch (e) {` first (esprima predates optional catch binding).
+  Still no Node.js on this machine.
 
 ---
 
@@ -362,7 +409,7 @@ No-extension test path: write a pipe-delimited arg line to
 - `C:\Dev\jumper-bridge\shared\BridgeProtocol.cs` — the wire protocol (§2). Change → rebuild both.
 - `C:\Dev\jumper-bridge\native-host\Program.cs` — the relay + `LaunchNamer`.
 - `C:\Dev\jumper-bridge\native-host\com.jumper.native_host.json` — pins the extension ID.
-- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.7.0), `background.js` (routing +
+- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.7.19), `background.js` (routing +
   dept-tab poll + side panel), `rules.json` (signal-URL block + header strip),
   `popup.html`/`popup.js` (log / settings / simulate), `sidepanel.html`/`.js`,
   `README.md`.
@@ -375,10 +422,20 @@ No-extension test path: write a pipe-delimited arg line to
 
 1. Decide the default `geckoDisplayMode` for real users (currently `"tab"`;
    side panel is opt-in via the popup).
-2. **Production packaging** — the main open problem (§8.4).
-3. `NewRecord` still does a plain navigation; real Jumper also switches the
+2. **Production packaging** — the main open problem (§8.5). Note the machine
+   already has a populated `HKCU\Software\Policies\Microsoft\Edge`, so
+   `ExtensionInstallForcelist` is a realistic zero-touch channel for the
+   extension. The BHO's **HKLM** activation key has no equivalent — that
+   asymmetry is the whole argument for an extension-only build.
+3. **The extension-only question is open, and the alert is the only blocker.**
+   `patientOpenMode: "url"` (§4.1) already gives a working BHO-free patient
+   open; it is just unpleasant. See
+   `docs/task-extension-only-patient-open.md` for the next brief, and
+   `docs/decisions.md` (2026-09-17) for the closed avenues — do not re-run them.
+4. `NewRecord` still does a plain navigation; real Jumper also switches the
    unit in the `Heading` frame and waits 500 ms — not replicated.
-4. Consider moving `OrdersForApprove` to `newTab` too, weighing the loss of
+5. Consider moving `OrdersForApprove` to `newTab` too, weighing the loss of
    `RefreshXMLObject("HospNursingOrdersForm")` on modal close.
-5. If ever needed, revisit merging the BHO and native host into one
+6. If ever needed, revisit merging the BHO and native host into one
    COM-registered `.exe` (§2) — spike standalone first.
+
