@@ -795,3 +795,31 @@ reach. That alert is the entire remaining gap between "extension-only works" and
   catch binding).
 
 Temporary H1 probe rules (rules.json ids 3/4/5) have been REMOVED; rules.json is back to ids 1/2.
+
+### 2026-09-17 17:50 — H5 VERIFIED END TO END (extension 0.7.19, `patientOpenMode: "url"`)
+
+User set the popup toggle to "Patient open via URL (degraded)" and clicked Patient A in the
+modern app. Full chain from `C:\Temp\jumper-bho.log`:
+
+    17:50:27 [pid=26652] [BeforeNavigate2]  http://chsw/chameleon/login.asp?quickOpen=1&Id=332747500&...   <- bare-host signal URL (popup tab, intercepted)
+    17:50:27 [pid=26044] [BeforeNavigate2]  http://chsw.tasmc.corp/chameleon/login.asp?quickOpen=1&Id=332747500&...  <- OUR rewrite via chrome.tabs.update
+    17:50:35 [pid=26044] [BeforeNavigate2]  .../SearchPatient?Logout=0&Patient=332747500&...&PatientID=0&QuickOpen=1&...   <- the alert-raising request
+    17:50:37 [pid=26044] .../NavigationTrees/PatientTree?patient=9003397574&record=16371953&unit=831000&recordType=3&recordChar=0
+    17:50:37 [pid=26044] .../Home/Main?Patient=332747500&...&QuickOpen=1
+    17:50:37 [pid=26044] .../RecordsMedicalRecord/MedicalRecord?...Patient=9003397574&Record=16371953&Unit=831000&Record_Type=Hospitalization&Start_Date=26%2F08%2F2026
+    17:50:44 [pid=26044] .../MedicalRecord?...&Record_Part=47&...      <- user navigating inside the record
+
+Correct patient (PatientNum 9003397574), correct record (16371953), correct unit (831000) and
+correct admission (Start_Date 26/08/2026 == AdmissionDate 2026-08-26). The `Record_Part=47`
+load proves the record is actually usable afterwards, not merely rendered.
+
+**The BHO was passive throughout.** The only BHO mention in the whole window is its own
+`TryProbeOpenPatientRecord` DocumentComplete probe — no `[invoke:pipe-immediate]`, no
+`EXEC_SCRIPT`, no queued command. This path therefore works with `bho-poc/` and
+`native-host/` deleted, which is the requirement.
+
+Defect confirmed present as documented: the `מטופל/ת לא נמצא/ה במערכת` alert fires first and
+must be dismissed, and the full shell reloads (~10 s wall clock here, 17:50:27 -> 17:50:37).
+
+STATUS: `patientOpenMode` stays **default `"bho"`**. The URL path is proven, but the alert on
+every open is why it is not the default.
