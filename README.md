@@ -11,8 +11,24 @@ in this repo:
 | BHO | `bho-poc/` | `JumperBho.dll`, a Browser Helper Object loaded by Trident into `iexplore.exe`. Drives Chameleon's `folderFrame` JS directly — the only way to reach IE-mode content, since `chrome.scripting`/`chrome.debugger` cannot. |
 | Shared | `shared/` | `BridgeProtocol.cs` — the wire protocol linked (not project-referenced) into both C# projects. **Changing it means rebuilding both.** |
 
-Full architecture, root-cause history, and known limitations:
-`~\.copilot\session-state\9de0e8ef-142d-4cdc-991f-63d3ad6a52cc\files\jumper-edge-poc-handoff.md`
+## Documentation
+
+| Doc | What's in it |
+|---|---|
+| [`docs/handoff.md`](docs/handoff.md) | Full architecture, how each link type is routed, known limitations. **Start here.** |
+| [`docs/decisions.md`](docs/decisions.md) | Chronological engineering log — root-cause analyses, design decisions, and dead ends. Read before re-attempting anything. |
+
+Two conclusions worth knowing up front, both proven the hard way (see
+`docs/decisions.md`):
+
+- **The BHO is not optional.** Edge IE mode exposes no scriptable document to any
+  other process — `ShellWindows`/ROT, `WM_HTML_GET_OBJECT` and UI Automation were
+  all tested and all fail. An in-process BHO is the only foothold available.
+- **A URL-only patient open almost works.** `login.asp?quickOpen=1&Id=<nationalID>`
+  opens the right patient, record and unit, but always raises a spurious
+  "patient not found" alert because Chameleon's `quickOpen` handler puts the
+  national ID into the `PatientNum` slot. If the vendor fixes that one mapping,
+  both the BHO *and* the native host become unnecessary.
 
 ## Why two binaries, one repo
 
