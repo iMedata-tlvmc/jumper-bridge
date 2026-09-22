@@ -65,7 +65,7 @@ it, and routes:
 |---|---|
 | shared session | background QuickOpen prime + corrected `Home/Main` — patient clicks, extension-only |
 | BHO pipe | optional legacy patient mode |
-| `script` | `showModalDialog` in `folderFrame` via the BHO — `Lab`, `OrdersForApprove` |
+| `script` | `showModalDialog` in `folderFrame` via the BHO — `OrdersForApprove` |
 | `newTab` | plain new Chameleon tab — `MedOrder`, `FluidBalance`, `ContagiousDisease`, `Cardio` |
 | `namer` | launches a native app |
 | `navigate` | navigates the existing Chameleon tab — `NewRecord` |
