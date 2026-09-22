@@ -57,10 +57,11 @@ to confirm a reload actually took effect.
 
 ## How routing works
 
-The modern app signals intent with a `window.open()` to a URL that is never meant to
-load. `rules.json` rule 1 blocks it (matching the *dotless* host `chsw`, so it cannot
-collide with the real `chsw.tasmc.corp`), and `background.js` intercepts the tab, closes
-it, and routes:
+The modern app signals intent with a link or `window.open()` to a URL that is
+never meant to load. `page-window-open-bridge.js` and `content-bridge.js` run at
+`document_start`, intercept recognized signals before navigation, and send the
+URL to `background.js`. The older popup-tab listener and `rules.json` block
+remain as defensive fallbacks.
 
 | kind | What it does |
 |---|---|
@@ -73,8 +74,8 @@ it, and routes:
 
 `patientOpenMode: "sharedSession"` is the default. The `"url"` option remains
 only as a diagnostic fallback because it raises a false patient-not-found alert.
-`medOrderSectorMode: "extension"` is the default; `"native"` retains the old
-`querySector` route as an explicit fallback.
+Med Orders always uses the extension-only shared-session sector lookup; the old
+native `querySector` route has been removed.
 
 Most links are `newTab` rather than modals on purpose: `showModalDialog` works, but the
 dialog is created **inside the Chameleon tab**, which isn't focused when the click came
@@ -88,8 +89,8 @@ state, the extension polls it every 1.5 s, and focuses the Gecko tab (or the sid
 1. **Bridge event log** — `bridge.*`, `deptTab.*`, `sidePanel.*` events. First place to look.
 2. **Settings** — Hospital ID (needed by the corrected patient `Home/Main`
    navigation; it is not carried in the signal URL) and the Gecko display mode.
-3. **Simulate window.open()** — fires a signal URL by hand through the real interception
-   path, so routing can be tested without the modern app. Edit the placeholder
+3. **Simulate window.open()** — fires a signal URL by hand through the popup
+   fallback path, so routing can be tested without the modern app. Edit the placeholder
    `PatientNum` / `Unit` / `MedicalRecord` / `AdmissionDate` values to match a **test**
    patient before using.
 
@@ -111,8 +112,6 @@ inextdata sub-frames only) is for.
 
 ## Not done
 
-- No content script / `postMessage` handshake with the modern app — interception happens
-  at the tab level, which needed no changes to the modern app.
 - `NewRecord` does a plain navigation; real Jumper also switches the unit in the
   `Heading` frame and waits 500 ms.
 - No packaging/deployment story for shipping three artefacts to clinician machines.

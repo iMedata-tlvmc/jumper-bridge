@@ -72,14 +72,9 @@
       fixed from the extension — see docs/decisions.md.</span>
   </div>
   <div class="row">
-    <select id="medOrderSectorMode" style="max-width:260px">
-      <option value="extension">Med Orders sector via shared session (default)</option>
-      <option value="native">Med Orders sector via BHO (fallback)</option>
-    </select>
     <button id="btnProbeMedOrderSector">Probe sector</button>
-    <span class="hint">Extension mode fetches only Chameleon's authenticated shell and
-      same-origin resources referenced by it. It does not read or store cookie values.
-      Native mode remains available only as a temporary fallback.</span>
+    <span class="hint">Checks the extension-only authenticated Med Orders sector lookup.
+      It does not read or store cookie values.</span>
   </div>
 
   <h3>3. Simulate modern app window.open()</h3>

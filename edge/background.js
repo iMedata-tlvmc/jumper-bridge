@@ -72,32 +72,12 @@ async function wrap(fn) {
 // We immediately close that throwaway tab and route the equivalent action to
 // the real Chameleon tab instead — exactly what an extension CAN do (no JS
 // injection required), based on the reverse-engineered deep-link URL format.
-//
-// IMPORTANT (2026-09-02 finding): WebView2's e.Handled = true cancels
-// navigation BEFORE any network request is sent. tabs.remove() alone can
-// only react AFTER the tab exists, which races against the real HTTP fetch
-// to the signal URL (http://chsw/chameleon/login.asp?quickOpen=1&...) —
-// observed in testing as a spurious, nameless file-download attempt, since
-// that endpoint is a pure signal, never meant to actually be loaded. Fixed
-// via declarativeNetRequest (rules.json): blocks requests to bare host
-// "chsw" (distinct from the real chsw.tasmc.corp Chameleon domain) before
-// they hit the network, matching WebView2's cancel-before-fetch behavior.
-// tabs.onCreated still sees the original pendingUrl (with all query params)
-// before the block takes effect, so parsing/routing below is unaffected.
-//
-// CORRECTION (2026-09-09): the rules.json block only covers navigations
-// serviced by Chromium. If the throwaway tab lands in IE mode, the request is
-// issued by Trident/WinINet, which bypasses Chromium's network stack entirely
-// - no declarativeNetRequest rule is ever consulted, the signal URL really is
-// fetched, and the nameless file-download attempt comes back. This was the
-// actual source of the spurious "Download Options" prompt. The IE-mode half of
-// the cancel now lives in the BHO (bho-poc/BhoObject.cs,
-// IsModernAppSignalUrl + BeforeNavigate2 cancel). Keep BOTH: this rule covers
-// Chromium-rendered tabs, the BHO covers IE-mode ones.
+// Gecko pages are intercepted at document start, before a signal navigation
+// exists. The declarativeNetRequest rule and popup listeners remain defensive
+// fallbacks for stale pages that were open before an extension reload.
 // ---------------------------------------------------------------------------
 
 const CHAMELEON_BASE_URL = "http://chsw.tasmc.corp";
-const DEFAULT_MED_ORDER_SECTOR_MODE = "extension";
 const USER_DETAILS_ENDPOINT = `${CHAMELEON_BASE_URL}/Chameleon/Include/DataReaderXML.asp`;
 
 // Mirrors Jumper's Common.cs Constants.INEXTDATA_BASE_URL + the "doctor" view
@@ -168,8 +148,6 @@ function toAbsoluteChameleonUrl(relativeOrAbsolute) {
 // intercept loop. Jumper (Gecko.cs -> Chameleon.cs) actually uses three
 // different mechanisms, faithfully reproduced here:
 //
-//   kind: "script"  -> exec JS inside the live Chameleon page's folderFrame via
-//                      the BHO. The remaining showModalDialog links. NOT a navigation.
 //   kind: "newTab"  -> plain new tab, URL untouched (Chameleon.cs does
 //                      window.open(url,'_blank')). These are external apps -
 //                      plus מאזן נוזלים / הוראות לתרופות, which Jumper opens as
@@ -492,28 +470,6 @@ async function setPatientOpenMode(mode) {
     await chrome.storage.local.set({ patientOpenMode: value });
     appendLog({ event: "patientOpenMode.set", mode: value });
     return { patientOpenMode: value };
-  });
-}
-
-async function getMedOrderSectorMode() {
-  try {
-    const { medOrderSectorMode } = await chrome.storage.local.get("medOrderSectorMode");
-    return ["extension", "native"].includes(medOrderSectorMode)
-      ? medOrderSectorMode
-      : DEFAULT_MED_ORDER_SECTOR_MODE;
-  } catch {
-    return DEFAULT_MED_ORDER_SECTOR_MODE;
-  }
-}
-
-async function setMedOrderSectorMode(mode) {
-  return wrap(async () => {
-    const value = ["extension", "native"].includes(mode)
-      ? mode
-      : DEFAULT_MED_ORDER_SECTOR_MODE;
-    await chrome.storage.local.set({ medOrderSectorMode: value });
-    appendLog({ event: "medOrderSectorMode.set", mode: value });
-    return { medOrderSectorMode: value };
   });
 }
 
@@ -886,8 +842,6 @@ async function routePatientOpenViaSharedSession(sourceUrl, patientCmd) {
 // mechanism, not just the URL, matters.
 async function routeToChameleon(target) {
   switch (target.kind) {
-    case "script":
-      return routeViaScript(target);
     case "newTab":
       return routeViaNewTab(target);
     case "namer":
@@ -898,36 +852,6 @@ async function routeToChameleon(target) {
   }
 }
 
-// showModalDialog family: run the script inside the live Chameleon page's
-// folderFrame via the BHO. Does NOT navigate or focus anything - the dialog
-// appears over the page the user is already on, exactly as in Jumper.
-async function routeViaScript(target) {
-  const script = target.script;
-  const fallbackUrl = target.fallbackUrl;
-
-  const response = await sendNativeCommand({ type: "execScript", frame: "folderFrame", script });
-  appendLog({ event: "bridge.routed", label: target.label, mechanism: "script", response });
-
-  // The modal is the preferred UX, but it depends on showModalDialog being
-  // present in the Chameleon frame's document mode - and in Edge IE mode it
-  // may not be. Before this fallback existed, that failure was completely
-  // silent: the popup tab had already been removed, the script threw inside a
-  // setTimeout where nothing could observe it, and the user saw the link
-  // simply do nothing. Degrading to the plain new tab restores the behaviour
-  // these links had before the modal rework.
-  if ((!response || response.ok !== true) && fallbackUrl) {
-    appendLog({
-      event: "bridge.scriptFallback",
-      label: target.label,
-      status: response && response.status,
-      url: fallbackUrl,
-    });
-    return routeViaNewTab({ label: target.label + "(fallback)", url: fallbackUrl });
-  }
-
-  return response;
-}
-
 // window.open(url, '_blank') equivalent: a separate application, opened as its
 // own tab with the URL untouched. Must never reuse the Chameleon tab.
 async function routeViaNewTab(target) {
@@ -936,21 +860,12 @@ async function routeViaNewTab(target) {
   // MedOrder only: the URL is incomplete without GetUserSector() from the live
   // Chameleon document. Opening it as-is yields PermissionDenied.aspx.
   if (target.needsSector) {
-    const mode = await getMedOrderSectorMode();
-    let sector = null;
-    let response;
-    if (mode === "extension") {
-      response = await lookupSectorViaSharedSession();
-      sector = response.ok ? response.sector : null;
-      appendLog({ event: "bridge.sectorLookup", label: target.label, mode, ...response });
-    } else {
-      response = await sendNativeCommand({ type: "querySector" });
-      sector = response && response.ok ? response.sector : null;
-      appendLog({ event: "bridge.sectorLookup", label: target.label, mode, response });
-    }
+    const response = await lookupSectorViaSharedSession();
+    const sector = response.ok ? response.sector : null;
+    appendLog({ event: "bridge.sectorLookup", label: target.label, mode: "extension", ...response });
     if (sector === null || sector === undefined || sector === "") {
-      appendLog({ event: "bridge.sectorUnavailable", label: target.label, mode, response });
-      return { ok: false, error: `GetUserSector() unavailable in ${mode} mode` };
+      appendLog({ event: "bridge.sectorUnavailable", label: target.label, response });
+      return { ok: false, error: "GetUserSector() unavailable from the shared session" };
     }
     url = target.buildUrl(encodeURIComponent(sector));
   }
@@ -1029,22 +944,16 @@ function markPopupCandidate(tabId) {
   setTimeout(() => popupCandidateTabIds.delete(tabId), POPUP_CANDIDATE_TTL_MS);
 }
 
-async function maybeInterceptModernPopup(tabId, url) {
-  if (!url || handledPopupTabIds.has(tabId)) return false;
-
-  // Only ever act on a real popup. Any tab we navigate ourselves (above all
-  // the Chameleon tab) is never a candidate, which is what breaks the loop.
-  if (!popupCandidateTabIds.has(tabId)) return false;
-
-  // Patient records take the new BHO path (preserves full chrome); every
-  // other signal URL pattern keeps the Phase-2 record-only deep-link flow.
+async function routeModernSignal(url, context = {}) {
+  const { source = "popup", tabId = null, closeTab = false } = context;
   const patientCmd = matchPatientCommand(url);
   if (patientCmd) {
-    handledPopupTabIds.add(tabId);
+    if (typeof tabId === "number") handledPopupTabIds.add(tabId);
     const patientOpenMode = await getPatientOpenMode();
     appendLog({
       event: "bridge.intercepted",
       tabId,
+      source,
       sourceUrl: url,
       label:
         patientOpenMode === "sharedSession"
@@ -1053,10 +962,12 @@ async function maybeInterceptModernPopup(tabId, url) {
             ? "OpenPatientRecord(URL fallback)"
             : "OpenPatientRecord(BHO)"
     });
-    try {
-      await chrome.tabs.remove(tabId);
-    } catch (e) {
-      // tab may already be gone
+    if (closeTab && typeof tabId === "number") {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch (e) {
+        // tab may already be gone
+      }
     }
     if (patientOpenMode === "sharedSession") {
       await routePatientOpenViaSharedSession(url, patientCmd);
@@ -1071,16 +982,28 @@ async function maybeInterceptModernPopup(tabId, url) {
   const target = await buildChameleonTarget(url);
   if (!target) return false;
 
-  handledPopupTabIds.add(tabId);
-  appendLog({ event: "bridge.intercepted", tabId, sourceUrl: url, label: target.label });
+  if (typeof tabId === "number") handledPopupTabIds.add(tabId);
+  appendLog({ event: "bridge.intercepted", tabId, source, sourceUrl: url, label: target.label });
 
-  try {
-    await chrome.tabs.remove(tabId);
-  } catch (e) {
-    // tab may already be gone
+  if (closeTab && typeof tabId === "number") {
+    try {
+      await chrome.tabs.remove(tabId);
+    } catch (e) {
+      // tab may already be gone
+    }
   }
   await routeToChameleon(target);
   return true;
+}
+
+async function maybeInterceptModernPopup(tabId, url) {
+  if (!url || handledPopupTabIds.has(tabId)) return false;
+
+  // Only ever act on a real popup. Any tab we navigate ourselves (above all
+  // the Chameleon tab) is never a candidate, which is what breaks the loop.
+  if (!popupCandidateTabIds.has(tabId)) return false;
+
+  return routeModernSignal(url, { source: "popupFallback", tabId, closeTab: true });
 }
 
 chrome.tabs.onCreated.addListener((tab) => {
@@ -1137,22 +1060,14 @@ async function setHospitalId(hospitalId) {
 
 async function getSettings() {
   return wrap(async () => {
-    const { hospitalId, geckoDisplayMode, patientOpenMode, medOrderSectorMode } =
-      await chrome.storage.local.get([
-        "hospitalId",
-        "geckoDisplayMode",
-        "patientOpenMode",
-        "medOrderSectorMode",
-      ]);
+    const { hospitalId, geckoDisplayMode, patientOpenMode } =
+      await chrome.storage.local.get(["hospitalId", "geckoDisplayMode", "patientOpenMode"]);
     return {
       hospitalId: hospitalId || "101",
       geckoDisplayMode: geckoDisplayMode === "sidePanel" ? "sidePanel" : "tab",
       patientOpenMode: ["sharedSession", "bho", "url"].includes(patientOpenMode)
         ? patientOpenMode
         : DEFAULT_PATIENT_OPEN_MODE,
-      medOrderSectorMode: ["extension", "native"].includes(medOrderSectorMode)
-        ? medOrderSectorMode
-        : DEFAULT_MED_ORDER_SECTOR_MODE,
     };
   });
 }
@@ -1172,6 +1087,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case "simulateModernPopup":
         sendResponse(await simulateModernPopup(msg.url));
         break;
+      case "routeModernSignal": {
+        const senderUrl = sender.url || "";
+        const allowedSender =
+          senderUrl.startsWith("https://inextdata.tasmc.corp/") ||
+          senderUrl.startsWith("https://dev-inextdata.tasmc.corp/") ||
+          senderUrl.startsWith("http://localhost/") ||
+          senderUrl.startsWith("http://127.0.0.1/");
+        if (!allowedSender) {
+          sendResponse({ ok: false, error: "untrusted signal sender" });
+          break;
+        }
+        sendResponse(await wrap(() =>
+          routeModernSignal(msg.url, { source: "contentScript" })
+        ));
+        break;
+      }
       case "setHospitalId":
         sendResponse(await setHospitalId(msg.hospitalId));
         break;
@@ -1183,9 +1114,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       case "setPatientOpenMode":
         sendResponse(await setPatientOpenMode(msg.mode));
-        break;
-      case "setMedOrderSectorMode":
-        sendResponse(await setMedOrderSectorMode(msg.mode));
         break;
       case "probeMedOrderSector":
         sendResponse(await probeMedOrderSector());

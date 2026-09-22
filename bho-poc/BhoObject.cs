@@ -88,20 +88,15 @@ namespace JumperBho
 
     // DWebBrowserEvents2 - the dispinterface IWebBrowser2 fires events
     // through. We only declare the members we actually need
-    // (DocumentComplete, BeforeNavigate2, DownloadBegin); a dispinterface is
+    // (DocumentComplete, BeforeNavigate2, DownloadBegin, FileDownload); a dispinterface is
     // invoked strictly by DISPID via IDispatch::Invoke, so declaring a subset
     // is safe - COM never inspects the rest of the interface's members.
     // DISPIDs are from Microsoft's exdisp.h: DISPID_BEFORENAVIGATE2=250 (0xFA),
     // DISPID_DOCUMENTCOMPLETE=259 (0x103), DISPID_DOWNLOADBEGIN=106 (0x6A).
     // DownloadBegin fires whenever IE is about to show its "open/save this
-    // file" download UI for a navigated resource it can't render inline -
-    // this is the hook we use to auto-dismiss the spurious ParseXsl download
-    // prompt that only appears when a patient is opened programmatically via
-    // this BHO (root cause: Chameleon's /Transform/ParseXsl endpoint returns
-    // Content-Type: text/xml, which Trident won't render as a top-level/frame
-    // navigation - it only ever renders correctly when the surrounding page's
-    // own script loads it in a way (e.g. via a real user-gesture-backed frame
-    // navigation) that isn't quite reproduced by our programmatic invocation).
+    // file" UI. It remains as a scoped backstop for optional legacy BHO-driven
+    // patient navigation; normal Gecko routing is intercepted before any IE
+    // mode signal request exists.
     [ComImport]
     [Guid("34A715A0-6587-11D0-924A-0020AFC7AC4D")]
     [InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
@@ -129,8 +124,8 @@ namespace JumperBho
         // could, in a broader form, close unrelated dialogs).
         //
         // ActiveDocument is VARIANT_TRUE when the target is an ActiveDocument
-        // (Word/Excel hosted in-place); the spurious ParseXsl pseudo-downloads
-        // are always plain (VARIANT_FALSE) downloads.
+        // (Word/Excel hosted in-place); scoped spurious downloads are plain
+        // (VARIANT_FALSE) downloads.
         [DispId(270)]
         void FileDownload([In] bool ActiveDocument, [In, Out] ref bool Cancel);
     }
@@ -145,36 +140,18 @@ namespace JumperBho
     {
         private readonly Action<string, object, object> _onEvent;
         private readonly Func<bool, bool> _onFileDownload;
-        private readonly Func<string, bool> _shouldCancelNavigation;
 
         public BrowserEventSink(
             Action<string, object, object> onEvent,
-            Func<bool, bool> onFileDownload = null,
-            Func<string, bool> shouldCancelNavigation = null)
+            Func<bool, bool> onFileDownload = null)
         {
             _onEvent = onEvent;
             _onFileDownload = onFileDownload;
-            _shouldCancelNavigation = shouldCancelNavigation;
         }
 
         public void BeforeNavigate2(object pDisp, ref object URL, ref object flags, ref object targetFrameName, ref object postData, ref object headers, ref bool cancel)
         {
             _onEvent("BeforeNavigate2", pDisp, URL);
-
-            // Setting cancel = VARIANT_TRUE here aborts the navigation BEFORE
-            // Trident issues any network request - the exact equivalent of
-            // WebView2's NewWindowRequested e.Handled = true, which is how the
-            // production Jumper app suppresses these same signal URLs.
-            try
-            {
-                if (_shouldCancelNavigation != null && _shouldCancelNavigation(URL as string))
-                {
-                    cancel = true;
-                }
-            }
-            catch
-            {
-            }
         }
 
         public void DocumentComplete(object pDisp, ref object URL)
@@ -729,27 +706,6 @@ namespace JumperBho
                                     writer.WriteLine(active ? BridgeProtocol.ReplyTrue : BridgeProtocol.ReplyFalse);
                                     Log($"  -> [pipe] Replied to QUERY_DEPT_TAB: {(active ? "1" : "0")}");
                                 }
-                                else if (string.Equals(line, BridgeProtocol.CmdQuerySector, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    // Mirrors Chameleon.OpenMedOrdersFromUrl, which reads
-                                    // GetUserSector() off the top document before it can build
-                                    // the MedOrders URL. Duplex like QUERY_DEPT_TAB.
-                                    string sector = QuerySectorOnUiThread();
-                                    writer.WriteLine(sector ?? "");
-                                    Log($"  -> [pipe] Replied to QUERY_SECTOR: '{sector}'");
-                                }
-                                else if (line.StartsWith(BridgeProtocol.CmdExecScriptPrefix, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    // Duplex: the caller needs to know whether the
-                                    // script actually ran so it can fall back to a
-                                    // plain new tab, rather than the user being
-                                    // shown nothing at all when the modal API is
-                                    // unavailable in this document mode.
-                                    Log("  -> [pipe] Received command: EXEC_SCRIPT (payload elided).");
-                                    string status = ExecScriptOnUiThread(line);
-                                    writer.WriteLine(status);
-                                    Log($"  -> [pipe] Replied to EXEC_SCRIPT: {status}");
-                                }
                                 else
                                 {
                                     Log($"  -> [pipe] Received command: {line}");
@@ -807,15 +763,6 @@ namespace JumperBho
         // next found - i.e. once that list-URL navigation completes).
         private static void HandleIncomingCommandOnUiThread(string line)
         {
-            // Prefix-dispatched commands. Anything without a known prefix is
-            // the original bare 9-field patient-open line, kept for backward
-            // compatibility with the existing native-host/file-trigger format.
-            if (line.StartsWith(BridgeProtocol.CmdExecScriptPrefix, StringComparison.OrdinalIgnoreCase))
-            {
-                HandleExecScriptCommand(line);
-                return;
-            }
-
             var parts = line.Split('|');
             object win = FindOpenPatientRecordWindow();
 
@@ -1046,19 +993,6 @@ namespace JumperBho
                     bool armed = IsDownloadSuppressionArmed();
                     Log($"  -> [FileDownload] activeDocument={activeDocument} suppressionArmed={armed} -> {(armed && !activeDocument ? "CANCELLING (spurious)" : "allowing")}");
                     return armed && !activeDocument;
-                },
-                navUrl =>
-                {
-                    // Return true => cancel this navigation outright.
-                    if (!IsModernAppSignalUrl(navUrl)) return false;
-
-                    // Belt and braces: also arm the download guard in THIS
-                    // process. BeforeNavigate2 and the resulting FileDownload
-                    // both fire on this same browser object, so if the cancel
-                    // is ever ignored the FileDownload hook still catches it.
-                    ArmDownloadSuppression("signal-url");
-                    Log($"  -> [signal-url] CANCELLING navigation to pure-signal URL (never meant to be fetched): '{navUrl}'");
-                    return true;
                 });
                 _connectionPoint.Advise(sink, out _adviseCookie);
                 Log($"  -> Advised DWebBrowserEvents2 sink successfully (cookie={_adviseCookie}). Waiting for BeforeNavigate2/DocumentComplete...");
@@ -1096,148 +1030,6 @@ namespace JumperBho
             return unchecked((int)0x80004001); // E_NOTIMPL - we don't need to hand the site back out for this POC
         }
 
-        // --- EXEC_SCRIPT / QUERY_SECTOR: replicating Jumper's non-patient links ---
-        //
-        // Every non-patient Gecko→Chameleon link in the real app is performed by
-        // executing JS inside the "folderFrame" window of the live Chameleon page
-        // (Chameleon.cs: OpenFluidBalanceFromUrl, OpenOrdersForApproveFromUrl,
-        // OpenLabFromUrl, OpenContagiousDiseaseFromUrl, OpenMedOrdersFromUrl) -
-        // NOT by navigating the browser to the URL. They all end up calling
-        // window.showModalDialog(...), which Chromium removed but Trident still
-        // supports; running it inside the IE-mode frame is the only way to get
-        // the same behaviour, and it leaves the user's patient context intact.
-        //
-        // Wire format: EXEC_SCRIPT|<frameName>|<base64-utf8 script>
-        // The script is base64-encoded because it contains quotes, newlines and
-        // '|' characters that would otherwise collide with the delimiter.
-        // Returns "OK" on success, or "FAIL:<reason>" so the caller (native
-        // host -> extension) can fall back to a plain new tab instead of the
-        // user getting silently nothing. Parsing/decoding happens on whatever
-        // thread calls this; only ExecScriptInFrame touches COM.
-        private static string HandleExecScriptCommand(string line)
-        {
-            try
-            {
-                // Split into exactly 3 so any '|' inside the payload is safe.
-                var parts = line.Split(new[] { '|' }, BridgeProtocol.ExecScriptFieldCount);
-                if (parts.Length != BridgeProtocol.ExecScriptFieldCount)
-                {
-                    Log($"  -> [exec-script] Malformed command (expected {BridgeProtocol.ExecScriptFieldCount} fields, got {parts.Length}).");
-                    return BridgeProtocol.Fail("malformed-command");
-                }
-
-                string frameName = parts[1];
-                string script;
-                try
-                {
-                    script = Encoding.UTF8.GetString(Convert.FromBase64String(parts[2]));
-                }
-                catch (FormatException ex)
-                {
-                    Log($"  -> [exec-script] Payload is not valid base64: {ex.Message}");
-                    return BridgeProtocol.Fail("bad-base64");
-                }
-
-                Log($"  -> [exec-script] frame='{frameName}' script={script.Length} chars.");
-                return ExecScriptInFrame(frameName, script);
-            }
-            catch (Exception ex)
-            {
-                Log($"  -> [exec-script] HandleExecScriptCommand failed: {ex}");
-                return BridgeProtocol.Fail(ex.GetType().Name);
-            }
-        }
-
-        // Marshals HandleExecScriptCommand onto the STA/UI thread and blocks
-        // for its status, mirroring QuerySectorOnUiThread. Used by the duplex
-        // EXEC_SCRIPT pipe branch.
-        private static string ExecScriptOnUiThread(string line)
-        {
-            try
-            {
-                if (_uiMarshaller == null || !_uiMarshaller.IsHandleCreated)
-                {
-                    Log("  -> [exec-script] No UI marshaller available yet.");
-                    return BridgeProtocol.Fail("no-ui-marshaller");
-                }
-
-                string result = BridgeProtocol.Fail("unknown");
-                _uiMarshaller.Invoke(new Action(() => { result = HandleExecScriptCommand(line); }));
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Log($"  -> [exec-script] ExecScriptOnUiThread failed: {ex.Message}");
-                return BridgeProtocol.Fail(ex.GetType().Name);
-            }
-        }
-
-        // Reports whether the modal script we are about to run can possibly
-        // work in this frame. showModalDialog is the single load-bearing API
-        // for the Chameleon modal links, and IE11/Edge-IE-mode can have it
-        // absent depending on document mode - in which case the script fails
-        // at runtime inside a setTimeout, where nothing can observe it. Probing
-        // the property directly turns that silent failure into a clear signal.
-        private static bool FrameSupportsModalDialog(object frameWindow)
-        {
-            try
-            {
-                object fn = InvokeGet(frameWindow, "showModalDialog");
-                return fn != null;
-            }
-            catch (Exception ex)
-            {
-                Log($"  -> [exec-script] showModalDialog probe failed: {ex.Message}");
-                return false;
-            }
-        }
-
-        // Fallback execution path for when window.execScript is unavailable or
-        // rejects the call (E_FAIL). Appends a <script> element to the frame's
-        // document, which works in every document mode. Best-effort only.
-        private static bool TryInjectScriptElement(object frameWindow, string script)
-        {
-            try
-            {
-                object doc = InvokeGet(frameWindow, "document");
-                if (doc == null) return false;
-
-                object el = doc.GetType().InvokeMember(
-                    "createElement", BindingFlags.InvokeMethod, null, doc, new object[] { "script" });
-                if (el == null) return false;
-
-                el.GetType().InvokeMember("text", BindingFlags.SetProperty, null, el, new object[] { script });
-
-                object head = doc.GetType().InvokeMember(
-                    "getElementsByTagName", BindingFlags.InvokeMethod, null, doc, new object[] { "head" });
-                object parent = null;
-                if (head != null)
-                {
-                    try
-                    {
-                        parent = head.GetType().InvokeMember(
-                            "item", BindingFlags.InvokeMethod, null, head, new object[] { 0 });
-                    }
-                    catch { }
-                }
-                if (parent == null) parent = InvokeGet(doc, "body");
-                if (parent == null) return false;
-
-                parent.GetType().InvokeMember(
-                    "appendChild", BindingFlags.InvokeMethod, null, parent, new object[] { el });
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Log($"  -> [exec-script] Script-element injection failed: {ex.Message}");
-                return false;
-            }
-        }
-
-        // Direct port of ChameleonSHDocVw.ExecScriptInFrame: walk the top
-        // document's frames collection, match by window .name, and call the
-        // frame window's own execScript. Deliberately resolved fresh each time
-        // (never cached) - the frame objects are replaced on every navigation.
         // Resolves the top-level window that actually hosts the Chameleon
         // frameset in this process.
         //
@@ -1363,171 +1155,10 @@ namespace JumperBho
             return null;
         }
 
-        private static string ExecScriptInFrame(string frameName, string script)
-        {
-            try
-            {
-                object frameWindow = FindFrameWindowByName(frameName);
-                if (frameWindow == null)
-                {
-                    Log($"  -> [exec-script] Frame '{frameName}' not reachable from the top window.");
-                    return BridgeProtocol.Fail("frame-not-found");
-                }
-
-                bool modalOk = FrameSupportsModalDialog(frameWindow);
-                Log($"  -> [exec-script] Frame '{frameName}' found; showModalDialog available = {modalOk}.");
-
-                if (!modalOk && script.IndexOf("showModalDialog", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    // Running it anyway would throw inside a setTimeout where
-                    // no one can see it, and the user would just get nothing.
-                    Log("  -> [exec-script] Frame cannot host showModalDialog - reporting failure so the caller can fall back.");
-                    return BridgeProtocol.Fail("no-showmodaldialog");
-                }
-
-                try
-                {
-                    frameWindow.GetType().InvokeMember(
-                        "execScript", BindingFlags.InvokeMethod, null, frameWindow,
-                        new object[] { script, "JavaScript" });
-                    Log($"  -> [exec-script] Executed in frame '{frameName}' via execScript.");
-                    return BridgeProtocol.ReplyOk;
-                }
-                catch (Exception ex)
-                {
-                    // execScript was removed in IE11 standards mode and can
-                    // also return a bare E_FAIL; fall back to injecting a
-                    // <script> element, which works in every document mode.
-                    Log($"  -> [exec-script] execScript failed ({ex.GetType().Name}: {ex.Message}); trying script-element injection.");
-                }
-
-                if (TryInjectScriptElement(frameWindow, script))
-                {
-                    Log($"  -> [exec-script] Executed in frame '{frameName}' via script-element injection.");
-                    return BridgeProtocol.ReplyOk;
-                }
-
-                return BridgeProtocol.Fail("exec-rejected");
-            }
-            catch (Exception ex)
-            {
-                Log($"  -> [exec-script] ExecScriptInFrame failed: {ex}");
-                return BridgeProtocol.Fail(ex.GetType().Name);
-            }
-        }
-
-        // Mirrors Chameleon.OpenMedOrdersFromUrl's
-        // internalBrowser.Document.InvokeScript("GetUserSector"). Touches live
-        // COM objects so it must run on the UI thread; called synchronously from
-        // the pipe thread, which blocks for the reply.
-        private static string QuerySectorOnUiThread()
-        {
-            try
-            {
-                if (_uiMarshaller == null || !_uiMarshaller.IsHandleCreated)
-                {
-                    Log("  -> [sector] No UI marshaller available yet.");
-                    return null;
-                }
-
-                string result = null;
-                _uiMarshaller.Invoke(new Action(() =>
-                {
-                    try
-                    {
-                        object win = GetTopWindow();
-                        if (win == null)
-                        {
-                            Log("  -> [sector] No top window available.");
-                            return;
-                        }
-
-                        // GetUserSector() is not guaranteed to live on the top
-                        // window - on the frameset it is defined inside one of
-                        // the frames, where calling it on top throws. Locate the
-                        // window that actually defines it, reusing the same
-                        // search that finds OpenPatientRecord.
-                        object target = SearchFramesForFunction(win, "GetUserSector", 6);
-                        if (target == null)
-                        {
-                            Log("  -> [sector] GetUserSector not found on the top window or any frame.");
-                            return;
-                        }
-
-                        object value = target.GetType().InvokeMember(
-                            "GetUserSector", BindingFlags.InvokeMethod, null, target, null);
-                        result = value != null ? value.ToString() : null;
-                        Log($"  -> [sector] GetUserSector() returned '{result}'.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Log($"  -> [sector] GetUserSector() failed: {ex.Message}");
-                    }
-                }));
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Log($"  -> [sector] QuerySectorOnUiThread failed: {ex.Message}");
-                return null;
-            }
-        }
-
-        // --- ROOT CAUSE of the spurious "Download Options" prompt ---
+        // --- Scoped suppression for legacy BHO-driven patient navigation -----
         //
-        // The modern app (inextdata) asks for a patient to be opened by calling
-        // window.open() on a SIGNAL URL on the bare, dotless host "chsw":
-        //
-        //   http://chsw/chameleon/login.asp?quickOpen=1&Id=...&PatientNum=...
-        //
-        // That endpoint is a pure signal. It carries the whole request in its
-        // query string and is NEVER meant to actually be fetched - the
-        // production Jumper app cancels it in WebView2's NewWindowRequested
-        // handler with e.Handled = true, before any request leaves the process
-        // (see Gecko.cs). Whatever the server returns for it is not renderable,
-        // so if it IS fetched Trident routes the response down the download
-        // path, producing the nameless ~6 KB "Download Options" entries.
-        //
-        // Confirmed from the log: a BRAND NEW iexplore.exe content process is
-        // spun up, its very first BeforeNavigate2 is this signal URL, and 45 ms
-        // later FileDownload fires twice. It is not the /Transform/ParseXsl
-        // endpoint that was originally suspected - which is why no
-        // Content-Disposition ever showed up in the Fiddler capture, and why it
-        // only ever happens on a programmatic open (a manually clicked patient
-        // never goes through a signal URL at all).
-        //
-        // The Edge extension already tries to reproduce WebView2's cancel via a
-        // declarativeNetRequest block rule on host "chsw" (edge/rules.json).
-        // That rule CANNOT work here: IE mode navigations are serviced by
-        // Trident/WinINet and bypass Chromium's network stack entirely, so no
-        // declarativeNetRequest rule is ever consulted. Cancelling in
-        // BeforeNavigate2 is the IE-mode-side equivalent, and it is the only
-        // place in this architecture where the fetch can be stopped before it
-        // is issued.
-        //
-        // The match is deliberately restricted to the BARE, DOTLESS host "chsw"
-        // - exactly what rules.json blocks. The real Chameleon origin
-        // (chsw.tasmc.corp) contains a dot and can never match, so ordinary
-        // browsing is untouched.
-        private static bool IsModernAppSignalUrl(string url)
-        {
-            if (string.IsNullOrEmpty(url)) return false;
-
-            Uri uri;
-            if (!Uri.TryCreate(url, UriKind.Absolute, out uri)) return false;
-            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
-
-            return string.Equals(uri.Host, "chsw", StringComparison.OrdinalIgnoreCase);
-        }
-
-        // --- Defence in depth: suppressing any download that still slips out ---
-        //
-        // With the signal URL cancelled above, no spurious download should ever
-        // be started. The two layers below remain as backstops in case a
-        // variant signal URL appears that the host match doesn't cover.
-        //
-        // Layer 1 - DWebBrowserEvents2::FileDownload (DISPID 270): the one
-        // supported point where Trident asks before it acts. It fires the
+        // DWebBrowserEvents2::FileDownload (DISPID 270) is the supported point
+        // where Trident asks before it acts. It fires the
         // instant a resource is classified as "must download", BEFORE any
         // download UI object exists; returning Cancel = true aborts the
         // transfer, so no dialog is ever constructed. No polling, no race.
@@ -1541,8 +1172,8 @@ namespace JumperBho
         //
         // NOTE: the armed flag is per-process on purpose. Arming it is only
         // useful in the process that will receive the FileDownload event, and
-        // every site that arms it (BeforeNavigate2 on a signal URL, and our own
-        // programmatic navigations) runs in that same process.
+        // every site that arms it for a programmatic legacy navigation runs in
+        // that same process.
         private const int DownloadSuppressionWindowSeconds = 10;
         private static long _suppressDownloadsUntilTicks; // DateTime.UtcNow.Ticks; read/written via Interlocked
 
@@ -1572,9 +1203,9 @@ namespace JumperBho
         // Known limitation: it only closes a prompt that appears AFTER the
         // baseline snapshot taken when DownloadBegin fires; one raised earlier
         // is already in the baseline and gets skipped. That is acceptable
-        // because layer 0 (cancelling the signal URL) stops the download before
-        // any dialog can exist. Do not "fix" it by dropping the baseline - that
-        // would make this close pre-existing, unrelated windows.
+        // because FileDownload is the primary suppression mechanism. Do not
+        // "fix" it by dropping the baseline - that would make this close
+        // pre-existing, unrelated windows.
         //
         // This BHO instance is loaded into ONE of possibly several iexplore.exe
         // processes for the tab (IE mode can split into a broker + content
@@ -1727,5 +1358,3 @@ namespace JumperBho
         private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     }
 }
-
-

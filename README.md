@@ -6,7 +6,7 @@ in this repo:
 
 | Component | Path | Role |
 |---|---|---|
-| Extension | `edge/` | Manifest V3 extension. Intercepts the modern app's `window.open()` signal URLs and routes each one (shared-session patient open, folderFrame script via the BHO, a new tab, or a native app launch). Also hosts Gecko in a side panel. |
+| Extension | `edge/` | Manifest V3 extension. Intercepts the modern app's `window.open()` signal URLs and routes each one through shared-session HTTP/navigation, a new tab, or a native app launch. Also hosts Gecko in a side panel. |
 | Native messaging host | `native-host/` | `com.jumper.native_host` — a stdio↔named-pipe relay the extension launches via `chrome.runtime.connectNative`. |
 | BHO | `bho-poc/` | `JumperBho.dll`, a Browser Helper Object loaded by Trident into `iexplore.exe`. Drives Chameleon's `folderFrame` JS for features that require in-page scripting; patient opening no longer uses it. |
 | Shared | `shared/` | `BridgeProtocol.cs` — the wire protocol linked (not project-referenced) into both C# projects. **Changing it means rebuilding both.** |
@@ -33,6 +33,9 @@ Two conclusions worth knowing up front, both proven the hard way (see
 - **The BHO remains for department-tab detection and optional legacy patient
   mode.** Edge IE mode still exposes no scriptable document to extensions or
   external automation.
+- **Signal URLs are stopped inside Gecko.** A document-start content bridge
+  intercepts recognized links and `window.open()` calls before a temporary tab
+  or IE-mode request exists, eliminating the download-prompt dependency.
 
 Required Enterprise Mode Site List entries:
 

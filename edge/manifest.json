@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Jumper Bridge (POC)",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "Bridges the modern Gecko web app to the legacy Chameleon EHR running in IE mode using shared-session patient navigation, new tabs, and native-assisted legacy features. Can also show Gecko in a side panel beside the Chameleon tab.",
   "permissions": [
     "tabs",
@@ -23,6 +23,31 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://inextdata.tasmc.corp/*",
+        "https://dev-inextdata.tasmc.corp/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["page-window-open-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://inextdata.tasmc.corp/*",
+        "https://dev-inextdata.tasmc.corp/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["content-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
   "declarative_net_request": {
     "rule_resources": [
       {

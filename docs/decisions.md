@@ -1052,3 +1052,72 @@ Live verification at 15:02:
 `medOrderSectorMode` now defaults to `"extension"`. `"native"` remains an
 explicit temporary fallback, but the successful route has no BHO, native-host,
 COM, or installed desktop dependency.
+
+## 2026-09-22 — Removed native sector and generic script fallbacks
+
+Extension 0.8.3 removes the now-unused fallback mechanisms end to end:
+
+- extension storage/UI and routing for `medOrderSectorMode: "native"`;
+- native message types `querySector` and `execScript`;
+- pipe commands `QUERY_SECTOR` and `EXEC_SCRIPT`;
+- BHO sector lookup and generic frame-script execution methods;
+- `OK` / `FAIL:<reason>` script reply protocol.
+
+Med Orders now has one route: authenticated `GetUserDetails` through the shared
+session. All current browser-page links use extension navigation/HTTP; none
+executes arbitrary script through the BHO. The remaining native/BHO protocol is
+limited to department-state polling and optional legacy patient opening. Namer
+continues as a separate native-host action and does not use COM.
+
+## 2026-09-22 — BeforeNavigate signal cancellation is unnecessary
+
+The BHO's `BeforeNavigate2` handler was changed to allow the bare-host `chsw`
+signal navigation while still arming the scoped download guard. Two patient
+opens succeeded without a visible download prompt.
+
+The log showed the signal navigation was allowed, followed by:
+
+    [FileDownload] activeDocument=False suppressionArmed=True
+      -> CANCELLING (spurious)
+
+Therefore the early navigation cancellation is not required, but this test does
+not remove the BHO dependency: the BHO's `FileDownload` hook actively prevented
+the prompt. The source now leaves signal navigation uncancelled and retains the
+scoped `FileDownload` suppression.
+
+A follow-up test removed the signal URL's call to `ArmDownloadSuppression`,
+which disabled both the `FileDownload` cancellation and prompt-dismissal
+backstop for that navigation. The download prompt immediately returned. The
+guard was restored. This confirms the remaining BHO download hook is necessary
+with the current interception architecture.
+
+## 2026-09-22 — SOLVED: intercept Gecko signals before navigation
+
+Extension 0.9.0 injects two scripts at `document_start` on Gecko origins:
+
+- a main-world wrapper for recognized `window.open()` signal URLs;
+- an isolated-world capture listener for recognized anchor clicks.
+
+Both send the URL to the service worker through `postMessage` /
+`chrome.runtime.sendMessage`. The service worker validates the sender origin
+and calls the same routing function previously used after popup creation.
+
+The first patient test still produced a microsecond popup and logged
+`source: "popupFallback"`, proving Gecko used an anchor rather than the wrapped
+`window.open()`. Adding capture-phase anchor interception changed the log to
+`source: "contentScript"` and eliminated the temporary tab.
+
+Controlled verification after clearing the BHO log:
+
+- patient opened correctly with no temporary tab or prompt;
+- no bare-host `http://chsw/...` `BeforeNavigate2`, signal, or non-active
+  `FileDownload` event occurred;
+- Med Orders opened correctly with `Sector=8` and no temporary tab;
+- interception was expanded to both observed signal hosts, `chsw` and
+  `chsw.tasmc.corp`.
+
+The BHO signal-specific `BeforeNavigate2`/download arming code was removed.
+Default Gecko routing no longer depends on the BHO for download suppression.
+The popup-tab listener and DNR rule remain as defensive fallbacks if a page is
+not reloaded after extension installation or an unknown invocation mechanism
+is introduced.

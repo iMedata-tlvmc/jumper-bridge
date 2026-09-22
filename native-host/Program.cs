@@ -81,34 +81,6 @@ namespace JumperNativeHost
                             response = new Dictionary<string, object> { { "ok", true }, { "active", active } };
                             Log($"QUERY_DEPT_TAB -> active={active}");
                         }
-                        else if (string.Equals(type, "querySector", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string sector = QuerySector();
-                            response = new Dictionary<string, object> { { "ok", true }, { "sector", sector } };
-                            Log($"QUERY_SECTOR -> sector='{sector}'");
-                        }
-                        else if (string.Equals(type, "execScript", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string frame = msg.TryGetValue("frame", out var f) && f != null ? f.ToString() : BridgeProtocol.DefaultFrame;
-                            string script = msg.TryGetValue("script", out var s) && s != null ? s.ToString() : null;
-                            if (string.IsNullOrEmpty(script))
-                            {
-                                throw new ArgumentException("execScript requires a non-empty 'script'.");
-                            }
-                            string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
-                            // Duplex: the BHO replies "OK" or "FAIL:<reason>". The
-                            // extension uses that to fall back to a new tab, so a
-                            // missing showModalDialog degrades instead of silently
-                            // doing nothing.
-                            string status = SendToBhoPipeDuplex(BridgeProtocol.CmdExecScriptPrefix + frame + BridgeProtocol.FieldSeparator + encoded);
-                            bool ok = BridgeProtocol.IsOk(status);
-                            response = new Dictionary<string, object>
-                            {
-                                { "ok", ok },
-                                { "status", status ?? "FAIL:no-reply" }
-                            };
-                            Log($"EXEC_SCRIPT -> frame={frame} scriptChars={script.Length} status={status ?? "<none>"}");
-                        }
                         else if (string.Equals(type, "launchNamer", StringComparison.OrdinalIgnoreCase))
                         {
                             string patnum = msg.TryGetValue("patnum", out var p) && p != null ? p.ToString() : null;
@@ -116,12 +88,16 @@ namespace JumperNativeHost
                             response = new Dictionary<string, object> { { "ok", true } };
                             Log($"LAUNCH_NAMER -> patnum={patnum}");
                         }
-                        else
+                        else if (string.Equals(type, "openPatient", StringComparison.OrdinalIgnoreCase))
                         {
                             string line = BuildPipeLine(msg);
                             SendToBhoPipe(line);
                             response = new Dictionary<string, object> { { "ok", true } };
                             Log($"Relayed to BHO pipe successfully: {line}");
+                        }
+                        else
+                        {
+                            throw new ArgumentException($"Unknown native message type '{type}'.");
                         }
                     }
                     catch (Exception ex)
@@ -206,55 +182,6 @@ namespace JumperNativeHost
             catch (Exception ex)
             {
                 Log($"EnsureSapLogonRunning failed (continuing anyway): {ex.Message}");
-            }
-        }
-
-        // Duplex QUERY_SECTOR round-trip, same shape as QueryDeptTabState below.
-        // Returns null if no Chameleon tab/BHO is listening.
-        private static string QuerySector()
-        {
-            using (var client = new NamedPipeClientStream(".", BridgeProtocol.PipeName, PipeDirection.InOut))
-            {
-                try
-                {
-                    client.Connect(BridgeProtocol.ConnectTimeoutMs);
-                }
-                catch (TimeoutException)
-                {
-                    return null;
-                }
-
-                // Same single-stream, no-nested-using rule as QueryDeptTabState.
-                var writer = new StreamWriter(client, Encoding.UTF8) { AutoFlush = true };
-                var reader = new StreamReader(client);
-                writer.WriteLine(BridgeProtocol.CmdQuerySector);
-                string response = reader.ReadLine();
-                return response != null ? response.Trim() : null;
-            }
-        }
-
-        // Sends an arbitrary command and reads the BHO's single reply line.
-        // Same single-stream, no-nested-using rule as QueryDeptTabState: wrapping
-        // one NamedPipeClientStream in nested usings double-disposes it.
-        // Returns null if no Chameleon tab/BHO is listening.
-        private static string SendToBhoPipeDuplex(string line)
-        {
-            using (var client = new NamedPipeClientStream(".", BridgeProtocol.PipeName, PipeDirection.InOut))
-            {
-                try
-                {
-                    client.Connect(BridgeProtocol.ConnectTimeoutMs);
-                }
-                catch (TimeoutException)
-                {
-                    return null;
-                }
-
-                var writer = new StreamWriter(client, Encoding.UTF8) { AutoFlush = true };
-                var reader = new StreamReader(client);
-                writer.WriteLine(line);
-                string response = reader.ReadLine();
-                return response != null ? response.Trim() : null;
             }
         }
 
