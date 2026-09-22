@@ -1,7 +1,8 @@
 # Jumper Edge Bridge
 
-An unpacked Manifest V3 extension. It is **one of three components** — on its own it
-can do nothing to the legacy app:
+An unpacked Manifest V3 extension. Patient opening works extension-only when
+Edge Enterprise Mode cookie sharing is configured. The BHO/native host remain
+for the routes that execute script inside IE mode:
 
 | Component | Location | Role |
 |---|---|---|
@@ -10,26 +11,37 @@ can do nothing to the legacy app:
 | BHO | `C:\Dev\jumper-bridge\bho-poc` | `JumperBho.dll`, loaded by Trident into `iexplore.exe`; drives Chameleon's `folderFrame` JS |
 
 Full background, architecture and gotchas:
-`~\.copilot\session-state\9de0e8ef-142d-4cdc-991f-63d3ad6a52cc\files\jumper-edge-poc-handoff.md`
+[`../docs/handoff.md`](../docs/handoff.md).
 
-## Why the BHO exists
+## Why the BHO still exists
 
 `chrome.scripting.executeScript` and `chrome.debugger` **both fail against IE-mode
 content** — it is rendered by Trident in a separate process, not by Chromium. Both were
 tried and empirically ruled out. A Browser Helper Object loaded by Trident itself is the
-only way in. (The probe UI that established this has been removed; the result is
-recorded in the handoff doc.)
+only way to execute Chameleon's in-page JavaScript. Patient opening does not require that:
+the default shared-session route uses background HTTP requests and top-level navigation.
 
 ## Prerequisites
 
 - Chameleon (`http://chsw.tasmc.corp`) already opens in Edge IE mode on this machine
   (Enterprise Site List / neutral sites configured).
-- The BHO is built and registered as admin (`register-bho.ps1`, or run
+- The Enterprise Mode Site List shares Chameleon's session cookies both ways:
+  ```xml
+  <shared-cookie host="chsw.tasmc.corp" name=".CHAMELEONAUTH"
+                 path="/" source-engine="Both" />
+  <shared-cookie host="chsw.tasmc.corp" name="ASP.NET_SessionId"
+                 path="/" source-engine="Both" />
+  <shared-cookie host="chsw.tasmc.corp" name="_cu"
+                 source-engine="Both" />
+  ```
+- For modal links and department-tab detection, the BHO must be built and
+  registered as admin (`register-bho.ps1`, or run
   `C:\Dev\jumper-bridge\install-jumper-bridge.ps1` to build+register both the
   BHO and native host in one elevated pass — this is the
   only step in the whole POC that needs elevation; see the handoff doc §8 for
   why).
-- The native host is built and registered (`register-native-host.ps1`, no
+- For those BHO routes and native app launches, the native host must be built
+  and registered (`register-native-host.ps1`, no
   admin needed). Its
   `com.jumper.native_host.json` pins this extension's ID —
   **update `allowed_origins` if the extension is ever repacked.**
@@ -51,11 +63,15 @@ it, and routes:
 
 | kind | What it does |
 |---|---|
-| BHO pipe | `OpenPatientRecord(...)` inside `folderFrame` — used for patient clicks |
+| shared session | background QuickOpen prime + corrected `Home/Main` — patient clicks, extension-only |
+| BHO pipe | optional legacy patient mode |
 | `script` | `showModalDialog` in `folderFrame` via the BHO — `Lab`, `OrdersForApprove` |
 | `newTab` | plain new Chameleon tab — `MedOrder`, `FluidBalance`, `ContagiousDisease`, `Cardio` |
 | `namer` | launches a native app |
 | `navigate` | navigates the existing Chameleon tab — `NewRecord` |
+
+`patientOpenMode: "sharedSession"` is the default. The `"url"` option remains
+only as a diagnostic fallback because it raises a false patient-not-found alert.
 
 Most links are `newTab` rather than modals on purpose: `showModalDialog` works, but the
 dialog is created **inside the Chameleon tab**, which isn't focused when the click came
@@ -67,9 +83,8 @@ state, the extension polls it every 1.5 s, and focuses the Gecko tab (or the sid
 ## Popup
 
 1. **Bridge event log** — `bridge.*`, `deptTab.*`, `sidePanel.*` events. First place to look.
-2. **Settings** — Hospital ID (needed to build the `OpenPatientRecord` deep link; it's a
-   page-level JS global in Chameleon, not carried in the signal URL, so it can't be read
-   automatically) and the Gecko display mode.
+2. **Settings** — Hospital ID (needed by the corrected patient `Home/Main`
+   navigation; it is not carried in the signal URL) and the Gecko display mode.
 3. **Simulate window.open()** — fires a signal URL by hand through the real interception
    path, so routing can be tested without the modern app. Edit the placeholder
    `PatientNum` / `Unit` / `MedicalRecord` / `AdmissionDate` values to match a **test**

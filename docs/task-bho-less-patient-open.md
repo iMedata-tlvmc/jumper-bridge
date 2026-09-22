@@ -1,5 +1,13 @@
 # Task: open a patient with a link — extension only, no BHO, no COM
 
+> **Status: superseded and completed 2026-09-22.** The later
+> `docs/task-extension-only-patient-open.md` investigation produced a working
+> extension-only route in extension 0.8.0: Enterprise Mode cookie sharing,
+> background QuickOpen session priming, then corrected `Home/Main` navigation.
+> Patients A and B were verified with no false alert or additional login. This
+> older brief is retained only as historical context; its open hypotheses and
+> fallback recommendation are no longer current.
+
 > Paste-ready brief for a fresh Copilot session started in this repo.
 > Start with: *"Read `docs/task-bho-less-patient-open.md` and work through it."*
 

@@ -454,16 +454,23 @@ async function getDisplayMode() {
 }
 
 // ---------------------------------------------------------------------------
-// H5 fallback: BHO-free patient open (storage key "patientOpenMode")
+// Patient open strategy (storage key "patientOpenMode")
 //
-//   "bho" - default, proven. Pipes OpenPatientRecord to the BHO.
-//   "url" - navigates the Chameleon tab to the modern app's own signal URL with
-//           the host rewritten from bare `chsw` to `chsw.tasmc.corp`. login.asp
-//           carries PatientNum/MedicalRecord/Unit/RecordChar/AdmissionDate
-//           through ASP Session state and the correct patient DOES open.
+//   "sharedSession" - default. Uses Enterprise Mode bidirectional cookie
+//                     sharing to prime Chameleon's ASP session in Chromium,
+//                     then navigates IE mode to corrected Home/Main parameters.
+//   "bho"           - pipes OpenPatientRecord to the BHO.
+//   "url"           - degraded direct QuickOpen URL fallback.
 //
-// The "url" mode exists only for machines where the BHO cannot be registered
-// (no admin, or IE mode unavailable). It is DEGRADED, knowingly:
+// sharedSession requires these Enterprise Mode Site List entries:
+//   <shared-cookie host="chsw.tasmc.corp" name=".CHAMELEONAUTH"
+//                  path="/" source-engine="Both" />
+//   <shared-cookie host="chsw.tasmc.corp" name="ASP.NET_SessionId"
+//                  path="/" source-engine="Both" />
+//   <shared-cookie host="chsw.tasmc.corp" name="_cu"
+//                  source-engine="Both" />
+//
+// The direct "url" mode is DEGRADED, knowingly:
 //   - a spurious `מטופל/ת לא נמצא/ה במערכת` alert fires on EVERY open and must
 //     be dismissed before the correct page shows. This is a server-side bug in
 //     login.asp (it puts the national ID into SearchPatient's `Patient` slot,
@@ -471,17 +478,19 @@ async function getDisplayMode() {
 //     unfixable from the extension - see docs/decisions.md 2026-09-16 and
 //     2026-09-17 (H1 disproven: declarativeNetRequest cannot see IE-mode
 //     traffic at all, so the request cannot be rewritten in flight).
-//   - ~2s full Chameleon shell reload instead of an in-place frame swap, which
-//     loses whatever the user had open.
+//   - full Chameleon shell reload instead of an in-place frame swap (up to 10
+//     seconds in measured traces), which loses whatever the user had open.
+//   - the session-sensitive flow can require another login.
 //   - does NOT cover the modal links (OrdersForApprove) or dept-tab detection;
 //     those still require the BHO.
-// Do not make this the default without a vendor fix to login.asp.
-const DEFAULT_PATIENT_OPEN_MODE = "bho";
+const DEFAULT_PATIENT_OPEN_MODE = "sharedSession";
 
 async function getPatientOpenMode() {
   try {
     const { patientOpenMode } = await chrome.storage.local.get("patientOpenMode");
-    return patientOpenMode === "url" ? "url" : DEFAULT_PATIENT_OPEN_MODE;
+    return ["sharedSession", "bho", "url"].includes(patientOpenMode)
+      ? patientOpenMode
+      : DEFAULT_PATIENT_OPEN_MODE;
   } catch {
     return DEFAULT_PATIENT_OPEN_MODE;
   }
@@ -489,7 +498,9 @@ async function getPatientOpenMode() {
 
 async function setPatientOpenMode(mode) {
   return wrap(async () => {
-    const value = mode === "url" ? "url" : "bho";
+    const value = ["sharedSession", "bho", "url"].includes(mode)
+      ? mode
+      : DEFAULT_PATIENT_OPEN_MODE;
     await chrome.storage.local.set({ patientOpenMode: value });
     appendLog({ event: "patientOpenMode.set", mode: value });
     return { patientOpenMode: value };
@@ -714,6 +725,87 @@ async function routePatientOpenViaUrl(sourceUrl, patientCmd) {
   }
 }
 
+async function routePatientOpenViaSharedSession(sourceUrl, patientCmd) {
+  const primeUrl = signalUrlToChameleonUrl(sourceUrl);
+  if (!primeUrl) {
+    appendLog({ event: "patientOpen.sharedSession.badSignalUrl", sourceUrl });
+    return { ok: false, error: "signal URL host is not the bare `chsw` form" };
+  }
+
+  try {
+    const sessionCheck = await fetch(`${CHAMELEON_BASE_URL}/Chameleon/Home/Main`, {
+      method: "GET",
+      credentials: "include",
+      redirect: "manual",
+      cache: "no-store",
+    });
+    if (sessionCheck.status !== 200) {
+      throw new Error(
+        "Shared Chameleon session unavailable. Check Enterprise Mode shared-cookie policy and log in."
+      );
+    }
+
+    const primeResponse = await fetch(primeUrl, {
+      method: "GET",
+      credentials: "include",
+      redirect: "follow",
+      cache: "no-store",
+    });
+    if (!primeResponse.ok) {
+      throw new Error(`QuickOpen session prime failed with HTTP ${primeResponse.status}`);
+    }
+
+    const { hospitalId = "101" } = await chrome.storage.local.get("hospitalId");
+    const correctedUrl = new URL(`${CHAMELEON_BASE_URL}/Chameleon/Home/Main`);
+    correctedUrl.search = new URLSearchParams({
+      Patient: patientCmd.patient,
+      PatientID: patientCmd.patient,
+      idnum: patientCmd.idNum,
+      Hospital: hospitalId,
+      QuickOpen: "1",
+      pReloginByUserRecord: "0",
+      IsPatientBlockForMultiUserUpdate: "False",
+      ReopneInMedicalReocrd: "False",
+      IsLogonRecordOpen: "False",
+    }).toString();
+
+    const tabs = await chrome.tabs.query({ url: `${CHAMELEON_BASE_URL}/*` });
+    const chameleonTab = tabs[0];
+    if (!chameleonTab) {
+      await chrome.tabs.create({ url: `${CHAMELEON_BASE_URL}/Chameleon/Account/LogOn` });
+      throw new Error("Opened Chameleon login. Log in once, then retry the patient.");
+    }
+
+    await chrome.tabs.update(chameleonTab.id, {
+      url: correctedUrl.toString(),
+      active: true,
+    });
+    await chrome.windows.update(chameleonTab.windowId, { focused: true });
+    appendLog({
+      event: "patientOpen.sharedSession.navigated",
+      tabId: chameleonTab.id,
+      primeStatus: primeResponse.status,
+      correctedUrl: correctedUrl.toString(),
+      patient: patientCmd.patient,
+      medicalRecord: patientCmd.medicalRecord,
+      unit: patientCmd.unit,
+    });
+    return {
+      ok: true,
+      mode: "sharedSession",
+      tabId: chameleonTab.id,
+      correctedUrl: correctedUrl.toString(),
+    };
+  } catch (err) {
+    appendLog({
+      event: "patientOpen.sharedSession.failed",
+      sourceUrl,
+      error: String(err),
+    });
+    return { ok: false, error: String(err) };
+  }
+}
+
 // Executes a routing decision from buildChameleonTarget. Each branch mirrors the
 // corresponding Chameleon.cs handler - see that function's comment for why the
 // mechanism, not just the URL, matters.
@@ -869,14 +961,21 @@ async function maybeInterceptModernPopup(tabId, url) {
       event: "bridge.intercepted",
       tabId,
       sourceUrl: url,
-      label: patientOpenMode === "url" ? "OpenPatientRecord(URL fallback)" : "OpenPatientRecord(BHO)"
+      label:
+        patientOpenMode === "sharedSession"
+          ? "OpenPatientRecord(shared session)"
+          : patientOpenMode === "url"
+            ? "OpenPatientRecord(URL fallback)"
+            : "OpenPatientRecord(BHO)"
     });
     try {
       await chrome.tabs.remove(tabId);
     } catch (e) {
       // tab may already be gone
     }
-    if (patientOpenMode === "url") {
+    if (patientOpenMode === "sharedSession") {
+      await routePatientOpenViaSharedSession(url, patientCmd);
+    } else if (patientOpenMode === "url") {
       await routePatientOpenViaUrl(url, patientCmd);
     } else {
       await routePatientOpenViaBho(patientCmd);
@@ -961,7 +1060,9 @@ async function getSettings() {
     return {
       hospitalId: hospitalId || "101",
       geckoDisplayMode: geckoDisplayMode === "sidePanel" ? "sidePanel" : "tab",
-      patientOpenMode: patientOpenMode === "url" ? "url" : "bho",
+      patientOpenMode: ["sharedSession", "bho", "url"].includes(patientOpenMode)
+        ? patientOpenMode
+        : DEFAULT_PATIENT_OPEN_MODE,
     };
   });
 }

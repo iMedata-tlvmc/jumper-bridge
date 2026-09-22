@@ -823,3 +823,191 @@ must be dismissed, and the full shell reloads (~10 s wall clock here, 17:50:27 -
 
 STATUS: `patientOpenMode` stays **default `"bho"`**. The URL path is proven, but the alert on
 every open is why it is not the default.
+
+### 2026-09-17 18:05 — D1 hidden-tab swap rejected; extension-only remains unacceptable
+
+Tested the cheapest remaining product-shape experiment from
+`task-extension-only-patient-open.md`: extension 0.7.20 navigated the existing
+Chameleon tab to the proven FQDN QuickOpen URL while keeping Gecko visible, then
+revealed Chameleon after 12 seconds.
+
+Observed browser result:
+- Gecko stayed visible for the full delay.
+- Chameleon then showed the login page.
+- After the user logged in, the same false `מטופל/ת לא נמצא/ה במערכת` alert
+  appeared; dismissing it loaded the correct patient.
+
+BHO log evidence:
+
+    18:05:47.786 [pid=26044] BeforeNavigate2 .../login.asp?quickOpen=1&Id=332747500&PatientNum=9003397574&MedicalRecord=16371953...
+    18:05:48.305 [pid=26044] DocumentComplete (same QuickOpen URL)
+    18:06:13.083 [pid=26044] BeforeNavigate2 .../account/logon
+    18:06:13.333 [pid=26044] BeforeNavigate2 .../SearchPatient?...Patient=332747500&PatientID=0&QuickOpen=1...
+    18:06:15.400 [pid=26044] BeforeNavigate2 .../PatientTree?patient=9003397574&record=16371953&unit=831000...
+    18:06:15.655 [pid=26044] BeforeNavigate2 .../MedicalRecord?...Patient=9003397574&Record=16371953&Unit=831000...
+
+Controls were run because the login page made the first result ambiguous:
+- immediate URL mode at 18:09 also reopened login before loading Patient B;
+- a normal `/Chameleon/Account/LogOn` completed the regular shell at 18:13:41,
+  but an immediate URL-mode Patient B click at 18:13:59 still rendered the
+  QuickOpen document without continuing until another login.
+
+Therefore the control no longer reproduced the earlier 17:50 no-login behavior,
+so this run cannot prove whether an inactive IE-mode alert blocks. It does prove
+the proposed UX is not an improvement in the current environment: it adds a
+12-second delay and still leaves authentication plus the false alert in front
+of the user. The experimental mode was removed in 0.7.21; the original `"url"`
+fallback remains behind its flag.
+
+Copying Chameleon's HTML/JS into the extension does not create another viable
+shape. Extension pages run in Chromium (no ActiveX), while a copied local page
+forced into IE mode would have a different origin and session and could not
+access Chameleon's frame tree. The shipped shell code also depends extensively
+on same-origin `top.*`/`parent.*` frames. Rehosting that code would therefore
+require server cooperation or rebuilding Chameleon, not an extension-only copy.
+
+**Conclusion:** there is no acceptable extension-only full-patient-page open
+against the current server. The precise blockers are the stateful QuickOpen
+entry point, its incorrect server-side parameter mapping (`PatientNum` must go
+to `PatientID`; national ID to `idnum`), the unavoidable modal alert, and the
+extension's inability to observe or script IE-mode content. Recommended action:
+ask the vendor to fix `login.asp` or expose a supported authenticated
+integration endpoint (including the existing `/ChameleonNET/` branch).
+
+### 2026-09-17 18:20 — D2 duplicate-tab session inheritance disproven
+
+Tested a browser-level duplicate rather than another URL:
+1. Log in normally to the Chameleon department shell.
+2. Use Edge's **Duplicate tab** command.
+3. Wait for the duplicate to finish loading in IE mode.
+4. Close the original so the extension can only select the duplicate.
+5. Trigger Patient A through the existing URL fallback.
+
+The duplicate itself loaded the normal shell, but it did so in a new Trident
+process (`pid=16180`; the preceding duplicate used `pid=29888`). QuickOpen in
+that duplicated process still showed the login page, then the false alert, and
+only after both interactions loaded the correct patient:
+
+    18:21:28.742 [pid=16180] BeforeNavigate2 .../login.asp?quickOpen=1&Id=332747500&PatientNum=9003397574...
+    18:21:35.299 [pid=16180] BeforeNavigate2 .../account/logon
+    18:21:35.522 [pid=16180] BeforeNavigate2 .../SearchPatient?...Patient=332747500&PatientID=0&QuickOpen=1...
+    18:21:37.258 [pid=16180] BeforeNavigate2 .../PatientTree?patient=9003397574&record=16371953&unit=831000...
+    18:21:37.505 [pid=16180] BeforeNavigate2 .../MedicalRecord?...Patient=9003397574&Record=16371953&Unit=831000...
+
+Therefore Edge tab duplication preserves the URL/IE-mode classification, but
+does not provide a reusable authenticated QuickOpen context. A keep-warm pool
+of duplicated Chameleon tabs cannot remove either the login or alert cost.
+
+### 2026-09-17 18:26 — `javascript:` navigation rejected by Edge
+
+Extension 0.7.22 tested whether `chrome.tabs.update()` could send a harmless
+`javascript:` URL into the live IE-mode tab, which would have offered a path to
+call Chameleon's own `OpenPatientRecord` function without content-script access.
+
+Edge rejected the call before navigation:
+
+    JavaScript URLs are not allowed in API based extension navigations.
+    Use chrome.scripting.executeScript instead.
+
+No `javascript:` navigation appeared in the BHO log. The recommended
+`chrome.scripting.executeScript` mechanism is already proven unable to target
+IE-mode documents, so this boundary is closed.
+
+### 2026-09-17 18:29 — Chromium/WinINET session bridge absent under current policy
+
+Extension 0.7.24 tested whether extension networking could borrow the
+authenticated Chameleon session without touching the IE-mode document:
+
+    chrome.cookies.getAll({ url: "http://chsw.tasmc.corp/" })
+    fetch("http://chsw.tasmc.corp/Chameleon/Home/Main", {
+      credentials: "include",
+      redirect: "manual"
+    })
+
+Result, with Chameleon logged in:
+
+    cookieNames: []
+    cookieCount: 0
+    status: 0
+    responseType: "opaqueredirect"
+    responseUrl: "http://chsw.tasmc.corp/Chameleon/Home/Main"
+
+The extension sees none of the IE-mode session cookies, and its request is
+redirected rather than receiving the authenticated page. This confirms the
+session split under the current Enterprise Mode configuration.
+
+**Correction / newly identified supported lever:** Microsoft supports
+bidirectional session-cookie sharing between Chromium and IE mode through
+`<shared-cookie ... source-engine="Both">` entries in the Enterprise Mode Site
+List. The active list at `https://iemode/sites.xml` contains Chameleon IE-mode
+site entries but no `<shared-cookie>` entries. Therefore this result does NOT
+disprove an IT-configured cookie bridge; it explains why no bridge exists now.
+Persistent AWS load-balancer cookies (`AWSALB*`) are not sufficient and are not
+eligible for this feature. The Chameleon authentication/session cookie names
+must be obtained from the authenticated login response or IE-mode diagnostics,
+then explicitly allowlisted.
+
+The temporary `cookies` permission and probe UI were removed in 0.7.25.
+
+## 2026-09-22 — SOLVED: extension-only patient open via shared session
+
+Microsoft's supported Enterprise Mode cookie-sharing feature changed the shape
+of the solution. A local site-list override added:
+
+    <shared-cookie host="chsw.tasmc.corp" name=".CHAMELEONAUTH"
+                   path="/" source-engine="Both" />
+    <shared-cookie host="chsw.tasmc.corp" name="ASP.NET_SessionId"
+                   path="/" source-engine="Both" />
+    <shared-cookie host="chsw.tasmc.corp" name="_cu"
+                   source-engine="Both" />
+
+After a fresh Edge restart/login, the extension's authenticated
+`GET /Chameleon/Home/Main` changed from an opaque redirect to HTTP 200. The
+temporary extension cookie probe saw `.CHAMELEONAUTH`, `ASP.NET_SessionId`, and
+`_cu`; no cookie values were logged or persisted.
+
+Several intermediate experiments established the final flow:
+
+- Posting the corrected `Patient` value to `/Chameleon/Account/LogOn` still
+  rendered the login form; the controller requires credentials.
+- Fetching the original `login.asp?quickOpen=1...` URL in the extension primes
+  record/unit/admission state in the shared server session without navigating IE.
+- Fetching corrected `Home/Main` then generated:
+
+      SearchPatient?...Patient=9003397574&PatientID=9003397574
+                    &QuickOpen=1&idnum=332747500...
+
+The decisive live test (extension 0.7.32) used that sequence and navigated the
+existing IE-mode tab. User result: **Patient A opened with no alert and no
+login.** Passive BHO log evidence:
+
+    13:55:45.594 BeforeNavigate2 .../Home/Main?Patient=9003397574
+                                      &PatientID=9003397574&idnum=332747500...
+    13:55:45.716 BeforeNavigate2 .../SearchPatient?...Patient=9003397574
+                                      &PatientID=9003397574&idnum=332747500...
+    13:55:46.740 BeforeNavigate2 .../PatientTree?patient=9003397574
+                                      &record=16371953&unit=831000...
+    13:55:47.431 BeforeNavigate2 .../MedicalRecord?...Patient=9003397574
+                                      &Record=16371953&Unit=831000
+                                      &Start_Date=26%2F08%2F2026...
+
+Extension 0.8.0 makes this generic `sharedSession` route the default, using the
+patient values parsed from each Gecko signal URL. It needs no BHO, native host,
+COM component, content injection, or stored credentials for patient opens.
+The previous BHO and direct-URL modes remain selectable for comparison.
+
+The generic route was then verified from a real Gecko click on Patient B:
+
+    14:01:38.520 BeforeNavigate2 .../Home/Main?Patient=9001674042
+                                      &PatientID=9001674042&idnum=9996620...
+    14:01:38.758 BeforeNavigate2 .../SearchPatient?...Patient=9001674042
+                                      &PatientID=9001674042&idnum=9996620...
+    14:01:39.710 BeforeNavigate2 .../PatientTree?patient=9001674042
+                                      &record=11152014&unit=831000...
+    14:01:39.947 BeforeNavigate2 .../MedicalRecord?...Patient=9001674042
+                                      &Record=11152014&Unit=831000
+                                      &Start_Date=25%2F07%2F2023...
+
+User result again: correct patient, no false alert, no login. This proves the
+production route is driven by parsed signal values rather than Patient A test
+constants.

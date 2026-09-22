@@ -1,6 +1,7 @@
 # Handoff: Jumper → Edge-extension POC
 
-**Last updated: 2026-09-09 16:30 — all components verified working end to end, including the side panel.**
+**Last updated: 2026-09-22 14:04 — extension-only shared-session patient opening
+verified with two patients; all other routes and the side panel remain operational.**
 
 Supersedes `44db5c78-.../files/save-prompt-issue-handoff.md` (stale, covered only
 the download-prompt bug, which is fixed).
@@ -40,15 +41,17 @@ All three now live together in this repo (`jumper-bridge`), under `bho-poc/`,
         │  window.open("<signal URL>")
         ▼
   Extension            C:\Dev\jumper-bridge\edge (unpacked)      ext id foogenbdjbghhmodemgdemkepedolald
-        │  chrome.runtime.connectNative
-        ▼
-  Native messaging host C:\Dev\jumper-bridge\native-host          com.jumper.native_host
-        │  named pipe  \\.\pipe\JumperBhoBridge
-        ▼
-  BHO (in-proc COM)    C:\Dev\jumper-bridge\bho-poc → JumperBho.dll, loaded into iexplore.exe
-        │  late-bound COM / IDispatch
-        ▼
-  Chameleon's folderFrame JS  (OpenPatientRecord, showModalDialog, …)
+        ├── shared cookies + HTTP/navigation ──► Chameleon patient open
+        │
+        └── chrome.runtime.connectNative
+                    ▼
+            Native messaging host C:\Dev\jumper-bridge\native-host
+                    │  named pipe  \\.\pipe\JumperBhoBridge
+                    ▼
+            BHO (in-proc COM) C:\Dev\jumper-bridge\bho-poc
+                    │  late-bound COM / IDispatch
+                    ▼
+            Chameleon's folderFrame JS (showModalDialog, dept detection, legacy patient mode)
 ```
 
 **What the native host does:** `JumperNativeHost.exe` is a thin stdio↔pipe
@@ -96,13 +99,14 @@ rebuilding both projects.**
 
 | Component | State |
 |---|---|
-| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.7.19**. Routing complete, Phase-1 probe UI removed, `scripting`/`debugger`/`cookies` permissions dropped. Side panel done and tested. |
+| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.8.0**. Extension-only shared-session patient open verified; temporary probe UI and `cookies` permission removed. |
 | Native host `C:\Dev\jumper-bridge\native-host` | builds clean, duplex `EXEC_SCRIPT`. |
 | BHO `C:\Dev\jumper-bridge\bho-poc` | `BhoObject.cs` ~1730 lines (was 1997). Builds clean. |
 | Shared `C:\Dev\jumper-bridge\shared` | `BridgeProtocol.cs`, linked into both C# projects. |
 
-**Verified working (2026-09-09):** patient click opens the record on the first
-click; מחלקות repeatably switches to Gecko; the spurious IE-mode download
+**Verified working (latest patient test 2026-09-22):** patient clicks open the
+correct record through the extension-only shared-session route with no false
+alert or additional login; מחלקות repeatably switches to Gecko; the spurious IE-mode download
 prompt is suppressed; all link types route correctly (§4); the side panel
 opens from the popup and shows Gecko beside the Chameleon tab, framing
 succeeds with no fallback needed. No known-broken paths.
@@ -120,7 +124,7 @@ legacy behaviour: `jumper\Chameleon.cs` / `Gecko.cs`; patterns in `Common.cs` 36
 
 | Hebrew / name | Pattern | Chameleon page | Route `kind` |
 |---|---|---|---|
-| (patient row click) | `patient` | `OpenPatientRecord(...)` | BHO pipe (or URL fallback, §4.1) |
+| (patient row click) | `patient` | corrected `Home/Main` after background QuickOpen prime | shared session (default; §4.1) |
 | הוראות לתרופות | `medOrder` | `MedOrdersFrm.aspx` (needs `&Sector=`) | `newTab` |
 | OrdersForApprove | `ordersForApprove` | `MedOrders4Approve.aspx?...&Stam=stam` | `script` (modal) |
 | מאזן נוזלים | `fluidBalance` | `FluidBalanceFrm.aspx` | `newTab` |
@@ -134,24 +138,54 @@ legacy behaviour: `jumper\Chameleon.cs` / `Gecko.cs`; patterns in `Common.cs` 36
 > (that's the "unconfirmed instructions" book icon on a patient row). Confirm
 > from the native-host log payload, not the Hebrew label.
 
-### 4.1 Patient open has a second, degraded mode (off by default)
+### 4.1 Patient open is extension-only via Enterprise Mode cookie sharing
 
-`chrome.storage.local` key **`patientOpenMode`**: `"bho"` (default) | `"url"`,
-toggled in the popup's Settings section. `"url"` replaces the BHO pipe with
-`chrome.tabs.update(chameleonTab, { url })` pointing at the modern app's own
-signal URL with the host rewritten from bare `chsw` to `chsw.tasmc.corp`. It
-needs no BHO, no native host, no COM and no admin — it is the fallback for
-machines where the BHO cannot be registered.
+`chrome.storage.local` key **`patientOpenMode`**:
+`"sharedSession"` (default) | `"bho"` | `"url"`.
 
-**It is genuinely degraded, and that is not fixable from the extension:**
+`"sharedSession"` uses Microsoft's supported bidirectional cookie sharing to
+make Chameleon's authenticated session available to the extension:
+
+```xml
+<shared-cookie host="chsw.tasmc.corp" name=".CHAMELEONAUTH"
+               path="/" source-engine="Both" />
+<shared-cookie host="chsw.tasmc.corp" name="ASP.NET_SessionId"
+               path="/" source-engine="Both" />
+<shared-cookie host="chsw.tasmc.corp" name="_cu"
+               source-engine="Both" />
+```
+
+For each patient click the extension:
+
+1. Auth-checks `/Chameleon/Home/Main` from its background service worker.
+2. Fetches the original FQDN `login.asp?quickOpen=1...` signal URL to prime
+   Chameleon's record/unit/admission state in the shared server session.
+3. Navigates the IE-mode tab to `Home/Main` with corrected fields:
+   `Patient=<PatientNum>`, `PatientID=<PatientNum>`, `idnum=<national ID>`.
+
+Verified 2026-09-22 with two real Gecko clicks, both with no false alert and no
+additional login. Passive BHO evidence showed:
+
+- Patient A: PatientNum `9003397574`, record `16371953`, unit `831000`,
+  admission date `26/08/2026`.
+- Patient B: PatientNum `9001674042`, record `11152014`, unit `831000`,
+  admission date `25/07/2023`.
+
+`"url"` is retained only as a degraded diagnostic fallback:
 
 - a spurious `מטופל/ת לא נמצא/ה במערכת` alert on **every** open. `login.asp`
   puts the national ID into `SearchPatient`'s `Patient` slot (which expects the
   PatientNum) and hardcodes `PatientID=0`. Server-side vendor bug.
-- ~2 s full Chameleon shell reload instead of an in-place frame swap; app state
-  is lost.
-- does not cover `OrdersForApprove` (modal) or מחלקות dept-tab detection —
-  those still require the BHO.
+- full Chameleon shell reload instead of an in-place frame swap; app state is
+  lost. Measured end-to-end time has varied up to ~10 s.
+- the flow is session-sensitive. It worked without re-authentication in the
+  2026-09-17 17:50 trace, but later controlled runs reopened the login page even
+  immediately after a normal login (§11 / `decisions.md` 2026-09-17 18:05).
+- does not cover `OrdersForApprove` (modal) or מחלקות dept-tab detection.
+
+`"bho"` retains the previous in-place `OpenPatientRecord` route. The BHO/native
+host are not used by `"sharedSession"`, but are still used by modal links and
+department-tab detection elsewhere in the extension.
 
 **Do not try to fix the alert by rewriting the request.** Proven 2026-09-17:
 `declarativeNetRequest` cannot see IE-mode traffic at all — a `block` rule on a
@@ -409,7 +443,7 @@ No-extension test path: write a pipe-delimited arg line to
 - `C:\Dev\jumper-bridge\shared\BridgeProtocol.cs` — the wire protocol (§2). Change → rebuild both.
 - `C:\Dev\jumper-bridge\native-host\Program.cs` — the relay + `LaunchNamer`.
 - `C:\Dev\jumper-bridge\native-host\com.jumper.native_host.json` — pins the extension ID.
-- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.7.19), `background.js` (routing +
+- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.8.0), `background.js` (routing +
   dept-tab poll + side panel), `rules.json` (signal-URL block + header strip),
   `popup.html`/`popup.js` (log / settings / simulate), `sidepanel.html`/`.js`,
   `README.md`.
@@ -425,17 +459,15 @@ No-extension test path: write a pipe-delimited arg line to
 2. **Production packaging** — the main open problem (§8.5). Note the machine
    already has a populated `HKCU\Software\Policies\Microsoft\Edge`, so
    `ExtensionInstallForcelist` is a realistic zero-touch channel for the
-   extension. The BHO's **HKLM** activation key has no equivalent — that
-   asymmetry is the whole argument for an extension-only build.
-3. **The extension-only question is open, and the alert is the only blocker.**
-   `patientOpenMode: "url"` (§4.1) already gives a working BHO-free patient
-   open; it is just unpleasant. See
-   `docs/task-extension-only-patient-open.md` for the next brief, and
-   `docs/decisions.md` (2026-09-17) for the closed avenues — do not re-run them.
+   extension. The BHO's **HKLM** activation key has no equivalent, so features
+   that still require IE-mode scripting have a heavier deployment footprint;
+   patient opening itself no longer has that dependency.
+3. Roll the three proven `<shared-cookie>` entries into the centrally hosted
+   `https://iemode/sites.xml`; the current machine is testing a reversible local
+   override at `C:\Temp\jumper-sites-cookie-share.xml`.
 4. `NewRecord` still does a plain navigation; real Jumper also switches the
    unit in the `Heading` frame and waits 500 ms — not replicated.
 5. Consider moving `OrdersForApprove` to `newTab` too, weighing the loss of
    `RefreshXMLObject("HospNursingOrdersForm")` on modal close.
 6. If ever needed, revisit merging the BHO and native host into one
    COM-registered `.exe` (§2) — spike standalone first.
-

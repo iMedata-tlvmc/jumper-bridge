@@ -6,9 +6,9 @@ in this repo:
 
 | Component | Path | Role |
 |---|---|---|
-| Extension | `edge/` | Manifest V3 extension. Intercepts the modern app's `window.open()` signal URLs and routes each one (folderFrame script via the BHO, a new tab, or a native app launch). Also hosts Gecko in a side panel. |
+| Extension | `edge/` | Manifest V3 extension. Intercepts the modern app's `window.open()` signal URLs and routes each one (shared-session patient open, folderFrame script via the BHO, a new tab, or a native app launch). Also hosts Gecko in a side panel. |
 | Native messaging host | `native-host/` | `com.jumper.native_host` — a stdio↔named-pipe relay the extension launches via `chrome.runtime.connectNative`. |
-| BHO | `bho-poc/` | `JumperBho.dll`, a Browser Helper Object loaded by Trident into `iexplore.exe`. Drives Chameleon's `folderFrame` JS directly — the only way to reach IE-mode content, since `chrome.scripting`/`chrome.debugger` cannot. |
+| BHO | `bho-poc/` | `JumperBho.dll`, a Browser Helper Object loaded by Trident into `iexplore.exe`. Drives Chameleon's `folderFrame` JS for features that require in-page scripting; patient opening no longer uses it. |
 | Shared | `shared/` | `BridgeProtocol.cs` — the wire protocol linked (not project-referenced) into both C# projects. **Changing it means rebuilding both.** |
 
 ## Documentation
@@ -21,14 +21,25 @@ in this repo:
 Two conclusions worth knowing up front, both proven the hard way (see
 `docs/decisions.md`):
 
-- **The BHO is not optional.** Edge IE mode exposes no scriptable document to any
-  other process — `ShellWindows`/ROT, `WM_HTML_GET_OBJECT` and UI Automation were
-  all tested and all fail. An in-process BHO is the only foothold available.
-- **A URL-only patient open almost works.** `login.asp?quickOpen=1&Id=<nationalID>`
-  opens the right patient, record and unit, but always raises a spurious
-  "patient not found" alert because Chameleon's `quickOpen` handler puts the
-  national ID into the `PatientNum` slot. If the vendor fixes that one mapping,
-  both the BHO *and* the native host become unnecessary.
+- **Patient opening is extension-only.** Edge's supported Enterprise Mode
+  cookie sharing gives Chromium the authenticated Chameleon session. The
+  extension primes the server's QuickOpen state in the background, then
+  navigates IE mode to `Home/Main` with the corrected PatientNum/national-ID
+  mapping. Verified with no false alert and no additional login.
+- **The BHO remains necessary only for features that truly script IE mode**, such
+  as modal execution and department-tab detection. Edge IE mode still exposes
+  no scriptable document to extensions or external automation.
+
+Required Enterprise Mode Site List entries:
+
+```xml
+<shared-cookie host="chsw.tasmc.corp" name=".CHAMELEONAUTH"
+               path="/" source-engine="Both" />
+<shared-cookie host="chsw.tasmc.corp" name="ASP.NET_SessionId"
+               path="/" source-engine="Both" />
+<shared-cookie host="chsw.tasmc.corp" name="_cu"
+               source-engine="Both" />
+```
 
 ## Why two binaries, one repo
 

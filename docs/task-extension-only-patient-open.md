@@ -1,5 +1,13 @@
 # Task: extension-only patient open — stop hunting URLs, change the shape of the solution
 
+> **Status: completed 2026-09-22.** Extension 0.8.0 implements the accepted
+> solution using Enterprise Mode bidirectional cookie sharing, background
+> QuickOpen session priming, and corrected `Home/Main` parameters. It was
+> verified with Patients A and B with no false alert or additional login.
+> See `docs/handoff.md` §4.1 and the final 2026-09-22 entry in
+> `docs/decisions.md`. The investigation brief below is retained as historical
+> context and should not be treated as the current implementation state.
+
 > Paste-ready brief for a fresh Copilot session started in this repo.
 > Start with: *"Read `docs/task-extension-only-patient-open.md` and work through it."*
 
