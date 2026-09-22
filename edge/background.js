@@ -244,27 +244,13 @@ async function buildChameleonTarget(sourceUrl) {
   }
 
   if ((m = sourceUrl.match(PATTERNS.ordersForApprove))) {
-    // OpenOrdersForApproveFromUrl (MedOrders4Approve.aspx): fixed size, then
-    // refresh the orders form. Left as a modal - this is NOT הוראות לתרופות
-    // (that is the MedOrder pattern below). Same one-shot guard as
-    // FluidBalance (2026-09-10): this script has side effects too (opens a
-    // modal, calls RefreshXMLObject), so it's equally vulnerable to running
-    // twice if BhoObject.ExecScriptInFrame's execScript-then-inject retry
-    // fires - guard pre-emptively rather than waiting for a bug report.
-    const url = toAbsoluteChameleonUrl(m[0]);
-    const guardKey = `__jumperOrdersForApproveOpen_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    // This is the unconfirmed-orders book icon, not הוראות לתרופות. Jumper
+    // opens it as a modal and refreshes HospNursingOrdersForm after close.
+    // Use a visible tab instead; the accepted tradeoff is no close-time refresh.
     return {
       label: "OrdersForApprove",
-      kind: "script",
-      fallbackUrl: url,
-      script:
-        `(setTimeout(function () {` +
-        `if (window.${guardKey}) return;` +
-        `window.${guardKey} = true;` +
-        `var url = '${url}';` +
-        `window.showModalDialog(url, self, 'dialogWidth:1020px;dialogHeight:800px;scroll:auto;help:no;status:no;');` +
-        `try{RefreshXMLObject("HospNursingOrdersForm");}catch(ex){}` +
-        `}, 100));`,
+      kind: "newTab",
+      url: toAbsoluteChameleonUrl(m[0]),
     };
   }
 
@@ -481,8 +467,8 @@ async function getDisplayMode() {
 //   - full Chameleon shell reload instead of an in-place frame swap (up to 10
 //     seconds in measured traces), which loses whatever the user had open.
 //   - the session-sensitive flow can require another login.
-//   - does NOT cover the modal links (OrdersForApprove) or dept-tab detection;
-//     those still require the BHO.
+//   - does NOT cover dept-tab detection or sector lookup; those still require
+//     the BHO.
 const DEFAULT_PATIENT_OPEN_MODE = "sharedSession";
 
 async function getPatientOpenMode() {

@@ -99,7 +99,7 @@ rebuilding both projects.**
 
 | Component | State |
 |---|---|
-| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.8.0**. Extension-only shared-session patient open verified; temporary probe UI and `cookies` permission removed. |
+| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.8.1**. Extension-only shared-session patient open verified; OrdersForApprove now opens in a tab. |
 | Native host `C:\Dev\jumper-bridge\native-host` | builds clean, duplex `EXEC_SCRIPT`. |
 | BHO `C:\Dev\jumper-bridge\bho-poc` | `BhoObject.cs` ~1730 lines (was 1997). Builds clean. |
 | Shared `C:\Dev\jumper-bridge\shared` | `BridgeProtocol.cs`, linked into both C# projects. |
@@ -126,7 +126,7 @@ legacy behaviour: `jumper\Chameleon.cs` / `Gecko.cs`; patterns in `Common.cs` 36
 |---|---|---|---|
 | (patient row click) | `patient` | corrected `Home/Main` after background QuickOpen prime | shared session (default; §4.1) |
 | הוראות לתרופות | `medOrder` | `MedOrdersFrm.aspx` (needs `&Sector=`) | `newTab` |
-| OrdersForApprove | `ordersForApprove` | `MedOrders4Approve.aspx?...&Stam=stam` | `script` (modal) |
+| OrdersForApprove | `ordersForApprove` | `MedOrders4Approve.aspx?...&Stam=stam` | `newTab` |
 | מאזן נוזלים | `fluidBalance` | `FluidBalanceFrm.aspx` | `newTab` |
 | Lab | `lab` | `LabResultsModal?...&Switch=1` | `newTab` |
 | ContagiousDisease | `contagiousDisease` | — | `newTab` |
@@ -181,11 +181,12 @@ additional login. Passive BHO evidence showed:
 - the flow is session-sensitive. It worked without re-authentication in the
   2026-09-17 17:50 trace, but later controlled runs reopened the login page even
   immediately after a normal login (§11 / `decisions.md` 2026-09-17 18:05).
-- does not cover `OrdersForApprove` (modal) or מחלקות dept-tab detection.
+- does not cover מחלקות dept-tab detection.
 
 `"bho"` retains the previous in-place `OpenPatientRecord` route. The BHO/native
-host are not used by `"sharedSession"`, but are still used by modal links and
-department-tab detection elsewhere in the extension.
+host are not used by `"sharedSession"`. They remain in use for department-tab
+detection, Med Orders sector lookup, Namer launch, and the optional legacy
+patient route.
 
 **Do not try to fix the alert by rewriting the request.** Proven 2026-09-17:
 `declarativeNetRequest` cannot see IE-mode traffic at all — a `block` rule on a
@@ -195,14 +196,14 @@ tab. IE mode fetches through WinINET, outside Chromium's network stack. This
 also means `webRequest` is equally useless there. Full evidence in
 `docs/decisions.md` (2026-09-17).
 
-**Why most links are `newTab`, not modals:** `showModalDialog` works in IE
+**Why links are `newTab`, not modals:** `showModalDialog` works in IE
 mode, but renders inside the (unfocused) Chameleon tab, so a click from the
 modern app shows nothing until the user switches tabs. Focusing the tab first
-was offered and declined in favour of new tabs. Only `OrdersForApprove`
-stays a modal — moving it would lose the
-`RefreshXMLObject("HospNursingOrdersForm")` its modal-close fires. `Lab` was
-moved to `newTab` too (2026-09-10) after the same invisible-modal symptom
-showed up on manual tab switch. `FluidBalance` has a known, accepted
+was offered and declined in favour of new tabs. `OrdersForApprove` moved to
+`newTab` in 0.8.1; the accepted tradeoff is losing the
+`RefreshXMLObject("HospNursingOrdersForm")` call that previously ran when its
+modal closed. `Lab` moved to `newTab` earlier (2026-09-10) after the same
+invisible-modal symptom showed up on manual tab switch. `FluidBalance` has a known, accepted
 cosmetic quirk instead: its in-page close control calls `window.close()`,
 and IE only allows that to close silently if the tab has a script-opener
 relationship — a `chrome.tabs.create()` tab doesn't have one, so IE prompts
@@ -247,12 +248,11 @@ to `routeViaNewTab` on failure.
 `ExecScriptInFrame` retries via `<script>`-element injection whenever the
 `execScript` COM call throws — which it can do **on return**, even after the
 script body already ran (execScript is unreliable in IE11 standards mode;
-that's the whole reason the retry exists). Any script-kind route with a real
-side effect is vulnerable to firing twice — discovered via a since-reverted
-FluidBalance experiment (§7) that opened two tabs for one click
-(2026-09-10). `OrdersForApprove` (still `script`/modal, §4) is guarded with a
-one-shot flag on the frame's `window` object so a retry becomes a no-op; add
-the same guard to any future script route with side effects.
+that's the whole reason the retry exists). Any future script-kind route with a
+real side effect is vulnerable to firing twice — discovered via a
+since-reverted FluidBalance experiment (§7) that opened two tabs for one click
+(2026-09-10). Add a one-shot guard on the frame's `window` object if such a
+route is introduced.
 
 ### Symptom → cause map
 
@@ -443,7 +443,7 @@ No-extension test path: write a pipe-delimited arg line to
 - `C:\Dev\jumper-bridge\shared\BridgeProtocol.cs` — the wire protocol (§2). Change → rebuild both.
 - `C:\Dev\jumper-bridge\native-host\Program.cs` — the relay + `LaunchNamer`.
 - `C:\Dev\jumper-bridge\native-host\com.jumper.native_host.json` — pins the extension ID.
-- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.8.0), `background.js` (routing +
+- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.8.1), `background.js` (routing +
   dept-tab poll + side panel), `rules.json` (signal-URL block + header strip),
   `popup.html`/`popup.js` (log / settings / simulate), `sidepanel.html`/`.js`,
   `README.md`.
@@ -467,7 +467,5 @@ No-extension test path: write a pipe-delimited arg line to
    override at `C:\Temp\jumper-sites-cookie-share.xml`.
 4. `NewRecord` still does a plain navigation; real Jumper also switches the
    unit in the `Heading` frame and waits 500 ms — not replicated.
-5. Consider moving `OrdersForApprove` to `newTab` too, weighing the loss of
-   `RefreshXMLObject("HospNursingOrdersForm")` on modal close.
-6. If ever needed, revisit merging the BHO and native host into one
+5. If ever needed, revisit merging the BHO and native host into one
    COM-registered `.exe` (§2) — spike standalone first.

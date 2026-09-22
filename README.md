@@ -26,9 +26,10 @@ Two conclusions worth knowing up front, both proven the hard way (see
   extension primes the server's QuickOpen state in the background, then
   navigates IE mode to `Home/Main` with the corrected PatientNum/national-ID
   mapping. Verified with no false alert and no additional login.
-- **The BHO remains necessary only for features that truly script IE mode**, such
-  as modal execution and department-tab detection. Edge IE mode still exposes
-  no scriptable document to extensions or external automation.
+- **The BHO remains necessary only for features that inspect IE mode**, such as
+  department-tab detection and the sector lookup used by Med Orders. Edge IE
+  mode still exposes no scriptable document to extensions or external
+  automation. No current Gecko link needs a BHO-driven modal.
 
 Required Enterprise Mode Site List entries:
 

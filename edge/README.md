@@ -18,8 +18,9 @@ Full background, architecture and gotchas:
 `chrome.scripting.executeScript` and `chrome.debugger` **both fail against IE-mode
 content** — it is rendered by Trident in a separate process, not by Chromium. Both were
 tried and empirically ruled out. A Browser Helper Object loaded by Trident itself is the
-only way to execute Chameleon's in-page JavaScript. Patient opening does not require that:
-the default shared-session route uses background HTTP requests and top-level navigation.
+only way to inspect or execute Chameleon's in-page JavaScript. Patient opening and all
+current browser-page links use extension-only navigation. The BHO remains for department
+tab detection, Med Orders sector lookup, and the optional legacy patient mode.
 
 ## Prerequisites
 
@@ -34,7 +35,8 @@ the default shared-session route uses background HTTP requests and top-level nav
   <shared-cookie host="chsw.tasmc.corp" name="_cu"
                  source-engine="Both" />
   ```
-- For modal links and department-tab detection, the BHO must be built and
+- For department-tab detection, Med Orders sector lookup, and legacy patient
+  mode, the BHO must be built and
   registered as admin (`register-bho.ps1`, or run
   `C:\Dev\jumper-bridge\install-jumper-bridge.ps1` to build+register both the
   BHO and native host in one elevated pass — this is the
@@ -65,8 +67,7 @@ it, and routes:
 |---|---|
 | shared session | background QuickOpen prime + corrected `Home/Main` — patient clicks, extension-only |
 | BHO pipe | optional legacy patient mode |
-| `script` | `showModalDialog` in `folderFrame` via the BHO — `OrdersForApprove` |
-| `newTab` | plain new Chameleon tab — `MedOrder`, `FluidBalance`, `ContagiousDisease`, `Cardio` |
+| `newTab` | plain new Chameleon tab — `OrdersForApprove`, `MedOrder`, `FluidBalance`, `Lab`, `ContagiousDisease`, `Cardio` |
 | `namer` | launches a native app |
 | `navigate` | navigates the existing Chameleon tab — `NewRecord` |
 

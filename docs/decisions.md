@@ -1011,3 +1011,14 @@ The generic route was then verified from a real Gecko click on Patient B:
 User result again: correct patient, no false alert, no login. This proves the
 production route is driven by parsed signal values rather than Patient A test
 constants.
+
+## 2026-09-22 — OrdersForApprove moved from modal to tab
+
+Extension 0.8.1 routes the unconfirmed-orders book icon
+(`MedOrders4Approve.aspx`, `ordersForApprove`) through `newTab` instead of
+executing `showModalDialog` in Chameleon's `folderFrame`.
+
+This makes the action visible immediately and removes its BHO/native-host
+dependency. The accepted tradeoff is that closing the tab does not run
+`RefreshXMLObject("HospNursingOrdersForm")`; users may need the source orders
+view to refresh through its normal lifecycle.
