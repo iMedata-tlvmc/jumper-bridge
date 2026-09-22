@@ -1,8 +1,8 @@
 # Jumper Edge Bridge
 
-An unpacked Manifest V3 extension. Patient opening works extension-only when
-Edge Enterprise Mode cookie sharing is configured. The BHO/native host remain
-for the routes that execute script inside IE mode:
+An unpacked Manifest V3 extension. Patient opening and Med Orders work extension-only when Edge Enterprise Mode
+cookie sharing is configured. The BHO/native host remain for department-tab
+detection, optional legacy patient mode, and native app launches:
 
 | Component | Location | Role |
 |---|---|---|
@@ -19,8 +19,8 @@ Full background, architecture and gotchas:
 content** — it is rendered by Trident in a separate process, not by Chromium. Both were
 tried and empirically ruled out. A Browser Helper Object loaded by Trident itself is the
 only way to inspect or execute Chameleon's in-page JavaScript. Patient opening and all
-current browser-page links use extension-only navigation. The BHO remains for department
-tab detection, Med Orders sector lookup, and the optional legacy patient mode.
+current browser-page links use extension-only navigation. The BHO remains for
+department-tab detection and the optional legacy patient mode.
 
 ## Prerequisites
 
@@ -35,8 +35,7 @@ tab detection, Med Orders sector lookup, and the optional legacy patient mode.
   <shared-cookie host="chsw.tasmc.corp" name="_cu"
                  source-engine="Both" />
   ```
-- For department-tab detection, Med Orders sector lookup, and legacy patient
-  mode, the BHO must be built and
+- For department-tab detection and legacy patient mode, the BHO must be built and
   registered as admin (`register-bho.ps1`, or run
   `C:\Dev\jumper-bridge\install-jumper-bridge.ps1` to build+register both the
   BHO and native host in one elevated pass — this is the
@@ -66,6 +65,7 @@ it, and routes:
 | kind | What it does |
 |---|---|
 | shared session | background QuickOpen prime + corrected `Home/Main` — patient clicks, extension-only |
+| shared session sector | authenticated `GetUserDetails` POST — Med Orders, extension-only |
 | BHO pipe | optional legacy patient mode |
 | `newTab` | plain new Chameleon tab — `OrdersForApprove`, `MedOrder`, `FluidBalance`, `Lab`, `ContagiousDisease`, `Cardio` |
 | `namer` | launches a native app |
@@ -73,6 +73,8 @@ it, and routes:
 
 `patientOpenMode: "sharedSession"` is the default. The `"url"` option remains
 only as a diagnostic fallback because it raises a false patient-not-found alert.
+`medOrderSectorMode: "extension"` is the default; `"native"` retains the old
+`querySector` route as an explicit fallback.
 
 Most links are `newTab` rather than modals on purpose: `showModalDialog` works, but the
 dialog is created **inside the Chameleon tab**, which isn't focused when the click came

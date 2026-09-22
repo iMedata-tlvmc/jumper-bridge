@@ -1,7 +1,7 @@
 # Handoff: Jumper → Edge-extension POC
 
-**Last updated: 2026-09-22 14:04 — extension-only shared-session patient opening
-verified with two patients; all other routes and the side panel remain operational.**
+**Last updated: 2026-09-22 15:02 — extension-only shared-session patient and
+Med Orders opening verified; all other routes and the side panel remain operational.**
 
 Supersedes `44db5c78-.../files/save-prompt-issue-handoff.md` (stale, covered only
 the download-prompt bug, which is fixed).
@@ -99,7 +99,7 @@ rebuilding both projects.**
 
 | Component | State |
 |---|---|
-| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.8.1**. Extension-only shared-session patient open verified; OrdersForApprove now opens in a tab. |
+| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.8.2**. Extension-only shared-session patient and Med Orders routes verified. |
 | Native host `C:\Dev\jumper-bridge\native-host` | builds clean, duplex `EXEC_SCRIPT`. |
 | BHO `C:\Dev\jumper-bridge\bho-poc` | `BhoObject.cs` ~1730 lines (was 1997). Builds clean. |
 | Shared `C:\Dev\jumper-bridge\shared` | `BridgeProtocol.cs`, linked into both C# projects. |
@@ -125,7 +125,7 @@ legacy behaviour: `jumper\Chameleon.cs` / `Gecko.cs`; patterns in `Common.cs` 36
 | Hebrew / name | Pattern | Chameleon page | Route `kind` |
 |---|---|---|---|
 | (patient row click) | `patient` | corrected `Home/Main` after background QuickOpen prime | shared session (default; §4.1) |
-| הוראות לתרופות | `medOrder` | `MedOrdersFrm.aspx` (needs `&Sector=`) | `newTab` |
+| הוראות לתרופות | `medOrder` | `MedOrdersFrm.aspx` with sector from authenticated `GetUserDetails` | shared session + `newTab` |
 | OrdersForApprove | `ordersForApprove` | `MedOrders4Approve.aspx?...&Stam=stam` | `newTab` |
 | מאזן נוזלים | `fluidBalance` | `FluidBalanceFrm.aspx` | `newTab` |
 | Lab | `lab` | `LabResultsModal?...&Switch=1` | `newTab` |
@@ -185,8 +185,29 @@ additional login. Passive BHO evidence showed:
 
 `"bho"` retains the previous in-place `OpenPatientRecord` route. The BHO/native
 host are not used by `"sharedSession"`. They remain in use for department-tab
-detection, Med Orders sector lookup, Namer launch, and the optional legacy
-patient route.
+detection, Namer launch, and the optional legacy patient route.
+
+### 4.2 Med Orders sector lookup is extension-only
+
+Chameleon's `/Chameleon/Content/Legacy/Include/Record.js` defines
+`GetUserSector()` by calling:
+
+```text
+xmlHTTP_Send("GetUserDetails", ["User", "{user}"], "")
+```
+
+`xmlHTTP_Send` posts the parameter XML to
+`/Chameleon/Include/DataReaderXML.asp`. Extension 0.8.2 makes the equivalent
+credentialed POST through the shared Chameleon session, reads only
+`User_Details/@Sector`, validates the value, and appends it to the
+`MedOrdersFrm.aspx` URL. It does not read or persist cookie values.
+
+Verified 2026-09-22: the extension returned sector `8`, opened the correct Med
+Orders page, and the popup logged `mode: "extension"` plus the final
+`&Sector=8` URL. Native-host and BHO logs contained no `querySector`,
+`QUERY_SECTOR`, or `[sector]` entry for the test. Storage key
+`medOrderSectorMode` defaults to `"extension"`; `"native"` keeps the previous
+BHO route as an explicit fallback.
 
 **Do not try to fix the alert by rewriting the request.** Proven 2026-09-17:
 `declarativeNetRequest` cannot see IE-mode traffic at all — a `block` rule on a
@@ -426,8 +447,9 @@ Get-Content C:\Temp\jumper-bho.log |
 ```
 
 Healthy signatures: `[sites] Registered site; N live site(s)`,
-`[invoke:pipe-immediate] ... returned without throwing`,
-`[dept-tab] state changed: ... -> ...`, `[sector] GetUserSector() returned '8'`.
+`[invoke:pipe-immediate] ... returned without throwing`, and
+`[dept-tab] state changed: ... -> ...`. A Med Orders extension-only test should
+have no `[sector]` or `QUERY_SECTOR` entry.
 
 **Watch the `pid=` prefix** — multiple `iexplore.exe` processes log to the same
 file; a command answered by the wrong pid is §5.3.
@@ -443,7 +465,7 @@ No-extension test path: write a pipe-delimited arg line to
 - `C:\Dev\jumper-bridge\shared\BridgeProtocol.cs` — the wire protocol (§2). Change → rebuild both.
 - `C:\Dev\jumper-bridge\native-host\Program.cs` — the relay + `LaunchNamer`.
 - `C:\Dev\jumper-bridge\native-host\com.jumper.native_host.json` — pins the extension ID.
-- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.8.1), `background.js` (routing +
+- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.8.2), `background.js` (routing +
   dept-tab poll + side panel), `rules.json` (signal-URL block + header strip),
   `popup.html`/`popup.js` (log / settings / simulate), `sidepanel.html`/`.js`,
   `README.md`.

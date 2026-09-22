@@ -71,6 +71,16 @@
       מחלקות detection. The alert is a server-side login.asp bug that cannot be
       fixed from the extension — see docs/decisions.md.</span>
   </div>
+  <div class="row">
+    <select id="medOrderSectorMode" style="max-width:260px">
+      <option value="extension">Med Orders sector via shared session (default)</option>
+      <option value="native">Med Orders sector via BHO (fallback)</option>
+    </select>
+    <button id="btnProbeMedOrderSector">Probe sector</button>
+    <span class="hint">Extension mode fetches only Chameleon's authenticated shell and
+      same-origin resources referenced by it. It does not read or store cookie values.
+      Native mode remains available only as a temporary fallback.</span>
+  </div>
 
   <h3>3. Simulate modern app window.open()</h3>
   <div class="row">

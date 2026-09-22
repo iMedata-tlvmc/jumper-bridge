@@ -97,6 +97,8 @@ async function wrap(fn) {
 // ---------------------------------------------------------------------------
 
 const CHAMELEON_BASE_URL = "http://chsw.tasmc.corp";
+const DEFAULT_MED_ORDER_SECTOR_MODE = "extension";
+const USER_DETAILS_ENDPOINT = `${CHAMELEON_BASE_URL}/Chameleon/Include/DataReaderXML.asp`;
 
 // Mirrors Jumper's Common.cs Constants.INEXTDATA_BASE_URL + the "doctor" view
 // ShowGecko() navigates to (Chameleon.cs HandlePatientsListOpen). Configurable
@@ -493,6 +495,28 @@ async function setPatientOpenMode(mode) {
   });
 }
 
+async function getMedOrderSectorMode() {
+  try {
+    const { medOrderSectorMode } = await chrome.storage.local.get("medOrderSectorMode");
+    return ["extension", "native"].includes(medOrderSectorMode)
+      ? medOrderSectorMode
+      : DEFAULT_MED_ORDER_SECTOR_MODE;
+  } catch {
+    return DEFAULT_MED_ORDER_SECTOR_MODE;
+  }
+}
+
+async function setMedOrderSectorMode(mode) {
+  return wrap(async () => {
+    const value = ["extension", "native"].includes(mode)
+      ? mode
+      : DEFAULT_MED_ORDER_SECTOR_MODE;
+    await chrome.storage.local.set({ medOrderSectorMode: value });
+    appendLog({ event: "medOrderSectorMode.set", mode: value });
+    return { medOrderSectorMode: value };
+  });
+}
+
 // Rewrites the dotless signal host to the real FQDN. The dotless form is what
 // rules.json rule 1 blocks; the FQDN form is a different requestDomain, so the
 // block does not follow the rewrite.
@@ -711,6 +735,71 @@ async function routePatientOpenViaUrl(sourceUrl, patientCmd) {
   }
 }
 
+function normalizeSector(value) {
+  const sector = String(value || "").trim();
+  return /^[A-Za-z0-9._-]{1,32}$/.test(sector) ? sector : null;
+}
+
+function decodeXmlAttribute(value) {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&");
+}
+
+async function lookupSectorViaSharedSession() {
+  const paramXml = '<ROOT><Param Name="User" Value="{user}" type="String"/></ROOT>';
+  const body = `SP=GetUserDetails&ParamXML=${encodeURIComponent(paramXml)}&WithHeader=0`;
+  const response = await fetch(USER_DETAILS_ENDPOINT, {
+    method: "POST",
+    credentials: "include",
+    redirect: "follow",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    },
+    body,
+  });
+  if (!response.ok) {
+    return {
+      ok: false,
+      error: `GetUserDetails failed with HTTP ${response.status}.`,
+      endpoint: USER_DETAILS_ENDPOINT,
+    };
+  }
+
+  const responseText = await response.text();
+  const userDetails = responseText.match(/<User_Details\b[^>]*\bSector\s*=\s*(["'])(.*?)\1/i);
+  const sector = userDetails && normalizeSector(decodeXmlAttribute(userDetails[2]));
+  if (!sector) {
+    return {
+      ok: false,
+      error: "GetUserDetails returned no valid User_Details/@Sector value.",
+      endpoint: USER_DETAILS_ENDPOINT,
+    };
+  }
+
+  return {
+    ok: true,
+    sector,
+    evidence: {
+      method: "GetUserDetails",
+      endpoint: USER_DETAILS_ENDPOINT,
+      source: "/Chameleon/Content/Legacy/Include/Record.js GetUserSector()",
+    },
+  };
+}
+
+async function probeMedOrderSector() {
+  return wrap(async () => {
+    const result = await lookupSectorViaSharedSession();
+    appendLog({ event: "medOrder.sectorProbe", ...result });
+    return result;
+  });
+}
+
 async function routePatientOpenViaSharedSession(sourceUrl, patientCmd) {
   const primeUrl = signalUrlToChameleonUrl(sourceUrl);
   if (!primeUrl) {
@@ -847,13 +936,23 @@ async function routeViaNewTab(target) {
   // MedOrder only: the URL is incomplete without GetUserSector() from the live
   // Chameleon document. Opening it as-is yields PermissionDenied.aspx.
   if (target.needsSector) {
-    const res = await sendNativeCommand({ type: "querySector" });
-    const sector = res && res.ok ? res.sector : null;
-    if (sector === null || sector === undefined || sector === "") {
-      appendLog({ event: "bridge.sectorUnavailable", label: target.label, response: res });
-      return { ok: false, error: "GetUserSector() unavailable - is Chameleon loaded?" };
+    const mode = await getMedOrderSectorMode();
+    let sector = null;
+    let response;
+    if (mode === "extension") {
+      response = await lookupSectorViaSharedSession();
+      sector = response.ok ? response.sector : null;
+      appendLog({ event: "bridge.sectorLookup", label: target.label, mode, ...response });
+    } else {
+      response = await sendNativeCommand({ type: "querySector" });
+      sector = response && response.ok ? response.sector : null;
+      appendLog({ event: "bridge.sectorLookup", label: target.label, mode, response });
     }
-    url = target.buildUrl(sector);
+    if (sector === null || sector === undefined || sector === "") {
+      appendLog({ event: "bridge.sectorUnavailable", label: target.label, mode, response });
+      return { ok: false, error: `GetUserSector() unavailable in ${mode} mode` };
+    }
+    url = target.buildUrl(encodeURIComponent(sector));
   }
 
   const tab = await chrome.tabs.create({ url, active: true });
@@ -1038,17 +1137,22 @@ async function setHospitalId(hospitalId) {
 
 async function getSettings() {
   return wrap(async () => {
-    const { hospitalId, geckoDisplayMode, patientOpenMode } = await chrome.storage.local.get([
-      "hospitalId",
-      "geckoDisplayMode",
-      "patientOpenMode",
-    ]);
+    const { hospitalId, geckoDisplayMode, patientOpenMode, medOrderSectorMode } =
+      await chrome.storage.local.get([
+        "hospitalId",
+        "geckoDisplayMode",
+        "patientOpenMode",
+        "medOrderSectorMode",
+      ]);
     return {
       hospitalId: hospitalId || "101",
       geckoDisplayMode: geckoDisplayMode === "sidePanel" ? "sidePanel" : "tab",
       patientOpenMode: ["sharedSession", "bho", "url"].includes(patientOpenMode)
         ? patientOpenMode
         : DEFAULT_PATIENT_OPEN_MODE,
+      medOrderSectorMode: ["extension", "native"].includes(medOrderSectorMode)
+        ? medOrderSectorMode
+        : DEFAULT_MED_ORDER_SECTOR_MODE,
     };
   });
 }
@@ -1079,6 +1183,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       case "setPatientOpenMode":
         sendResponse(await setPatientOpenMode(msg.mode));
+        break;
+      case "setMedOrderSectorMode":
+        sendResponse(await setMedOrderSectorMode(msg.mode));
+        break;
+      case "probeMedOrderSector":
+        sendResponse(await probeMedOrderSector());
         break;
       case "openChameleonTab":
         sendResponse(await wrap(() => openChameleonTab()));

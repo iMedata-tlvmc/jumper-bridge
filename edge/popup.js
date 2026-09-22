@@ -75,6 +75,17 @@ document.getElementById("patientOpenMode").addEventListener("change", async (e) 
   log(`setPatientOpenMode("${mode}")`, res);
 });
 
+document.getElementById("medOrderSectorMode").addEventListener("change", async (e) => {
+  const mode = e.target.value;
+  const res = await send({ type: "setMedOrderSectorMode", mode });
+  log(`setMedOrderSectorMode("${mode}")`, res);
+});
+
+document.getElementById("btnProbeMedOrderSector").addEventListener("click", async () => {
+  const res = await send({ type: "probeMedOrderSector" });
+  log("probeMedOrderSector", res);
+});
+
 document.getElementById("btnOpenSidePanel").addEventListener("click", async () => {
   // Called DIRECTLY here rather than round-tripping through background.js:
   // chrome.sidePanel.open() requires a user gesture and the gesture does NOT
@@ -105,6 +116,9 @@ document.getElementById("btnOpenSidePanel").addEventListener("click", async () =
     }
     if (res.result.patientOpenMode) {
       document.getElementById("patientOpenMode").value = res.result.patientOpenMode;
+    }
+    if (res.result.medOrderSectorMode) {
+      document.getElementById("medOrderSectorMode").value = res.result.medOrderSectorMode;
     }
   }
 })();

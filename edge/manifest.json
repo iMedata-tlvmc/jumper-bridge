@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Jumper Bridge (POC)",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Bridges the modern Gecko web app to the legacy Chameleon EHR running in IE mode using shared-session patient navigation, new tabs, and native-assisted legacy features. Can also show Gecko in a side panel beside the Chameleon tab.",
   "permissions": [
     "tabs",

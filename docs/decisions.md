@@ -1022,3 +1022,33 @@ This makes the action visible immediately and removes its BHO/native-host
 dependency. The accepted tradeoff is that closing the tab does not run
 `RefreshXMLObject("HospNursingOrdersForm")`; users may need the source orders
 view to refresh through its normal lifecycle.
+
+## 2026-09-22 — SOLVED: extension-only Med Orders sector lookup
+
+An authenticated extension probe found `GetUserSector()` in
+`/Chameleon/Content/Legacy/Include/Record.js`. It does not derive sector from
+the patient, unit, or a cookie. It calls:
+
+    xmlHTTP_Send("GetUserDetails", ["User", "{user}"], "")
+
+The shared helper in `UpdateXMLFunc.js` serializes those parameters as XML and
+POSTs them to `/Chameleon/Include/DataReaderXML.asp` with
+`SP=GetUserDetails&WithHeader=0`. The response exposes the current user's value
+as `User_Details/@Sector`.
+
+Extension 0.8.2 now performs that same credentialed POST using the Enterprise
+Mode shared session, validates the returned sector, and opens
+`MedOrdersFrm.aspx` in a new tab. No cookie values are read or stored, and no
+new host or `cookies` permission was added.
+
+Live verification at 15:02:
+
+- popup: `bridge.sectorLookup`, `mode: "extension"`, `sector: "8"`;
+- popup: `bridge.routed` to the expected URL ending in `&Sector=8`;
+- user confirmed the correct Med Orders page opened;
+- native-host/BHO logs had no `querySector`, `QUERY_SECTOR`, or `[sector]`
+  operation for the test.
+
+`medOrderSectorMode` now defaults to `"extension"`. `"native"` remains an
+explicit temporary fallback, but the successful route has no BHO, native-host,
+COM, or installed desktop dependency.
