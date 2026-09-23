@@ -22,6 +22,11 @@ only way to inspect Chameleon's in-page state. Patient opening and all
 current browser-page links use extension-only navigation. The BHO remains only
 for department-tab detection.
 
+If automatic **מחלקות → Gecko** switching is not needed, the BHO, COM
+registration, named pipe, and shared protocol are unnecessary. The native host
+then remains only for Namer. If Gecko does not need Namer either, the deployed
+runtime can consist of the extension and Enterprise Mode cookie policy alone.
+
 ## Prerequisites
 
 - Chameleon (`http://chsw.tasmc.corp`) already opens in Edge IE mode on this machine

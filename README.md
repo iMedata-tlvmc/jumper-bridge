@@ -32,6 +32,9 @@ Key conclusions worth knowing up front (see
   sector. No BHO/native-host call is made.
 - **The BHO remains only for department-tab detection.** Edge IE mode still
   exposes no scriptable document to extensions or external automation.
+- **The BHO is optional if automatic מחלקות switching is not required.** In
+  that configuration the native host is needed only for Gecko's Namer button.
+  If Namer is also omitted, the runtime can be extension-only.
 - **Signal URLs are stopped inside Gecko.** A document-start content bridge
   intercepts recognized links and `window.open()` calls before a temporary tab
   or IE-mode request exists, eliminating the download-prompt dependency.
@@ -49,8 +52,8 @@ Required Enterprise Mode Site List entries:
 
 ## Why two binaries, one repo
 
-The BHO and native host are **architecturally required to stay separate
-binaries** — Trident instantiates the BHO via
+When used, the BHO and native host are **architecturally required to stay
+separate binaries** — Trident instantiates the BHO via
 `CoCreateInstance(CLSCTX_INPROC_SERVER)`, which needs an in-proc COM DLL
 (`InprocServer32`); Edge launches the native host as a standalone process via
 `connectNative`, which needs a normal EXE. One binary can't satisfy both

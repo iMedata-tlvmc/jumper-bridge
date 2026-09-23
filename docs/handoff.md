@@ -25,6 +25,18 @@ Gecko page
 The BHO and native host do not open patients, query sectors, execute arbitrary
 scripts, or suppress downloads.
 
+## Optional native dependency boundary
+
+- If automatic **מחלקות → Gecko** switching is required, install the BHO,
+  native host, and named-pipe protocol.
+- If that switching is not required, the BHO/COM and named pipe are not needed;
+  the native host remains only for Gecko's Namer button.
+- If Namer is also not required, all active Gecko/Chameleon routing is
+  extension-only and neither native component is needed.
+
+`NamerButton.exe` and SAP are hospital applications, not repository artifacts.
+Our native host only starts them.
+
 ## Signal interception
 
 `page-window-open-bridge.js` wraps recognized `window.open()` calls in Gecko's

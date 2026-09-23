@@ -52,6 +52,10 @@ state.
 It does not navigate, invoke page functions, execute scripts, open patients, or
 handle downloads.
 
+This dependency is optional at deployment time. If automatic
+**מחלקות → Gecko** switching is not required, remove the BHO/COM installation,
+department polling, named pipe, and shared protocol.
+
 ## Keep the native host separate
 
 The BHO must be an in-process COM DLL loaded by Trident. Edge native messaging
@@ -62,6 +66,9 @@ The native host has two responsibilities:
 
 - relay `QUERY_DEPT_TAB` to the BHO through the named pipe;
 - launch Namer after validating the patient number.
+
+Without department switching it is needed only for Namer. Without Namer it is
+not needed at all.
 
 ## Start the pipe only in the Chameleon frameset process
 
