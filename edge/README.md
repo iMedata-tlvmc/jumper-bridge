@@ -38,7 +38,9 @@ for department-tab detection.
                  source-engine="Both" />
   ```
   Re-run the installer to pull later corporate site-list updates into that
-  local copy.
+  local copy. After installation, fully restart Edge, then **log out of
+  Chameleon and log back in** so the three session cookies are newly issued
+  while the sharing rules are active.
 - For department-tab detection, the BHO must be built and
   registered as admin (`register-bho.ps1`, or run
   `C:\Dev\jumper-bridge\install-jumper-bridge.ps1` to build+register both the

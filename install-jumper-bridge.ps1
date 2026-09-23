@@ -223,6 +223,6 @@ Write-Host "=== Done. Components and shared-cookie policy installed. ===" -Foreg
 Write-Host "Next steps:"
 Write-Host "  1. Fully restart Edge (BHO and Enterprise Mode list changes require a fresh browser process)."
 Write-Host "  2. Load the extension (edge://extensions -> Developer mode -> Load unpacked -> C:\Dev\jumper-bridge\edge), if not already loaded."
-Write-Host "  3. Log in to Chameleon again so the shared cookies are copied between IE mode and Chromium."
+Write-Host "  3. Log out of Chameleon completely, then log back in so fresh session cookies are shared with Chromium."
 Write-Host "  4. Open a Chameleon IE-mode tab and confirm C:\Temp\jumper-bho.log is growing."
 Write-Host "  5. Confirm C:\Temp\jumper-native-host.log is growing (the extension polls it every ~1.5s)."

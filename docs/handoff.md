@@ -386,9 +386,10 @@ script — revisit if/when this moves past POC.)
 
 **8.6 Clean-machine order:** §8.1 → §8.2 (elevated, does both registrations) →
 §8.5 → fully restart Edge (BHO activation keys are read once, at IE-mode host
-startup) →
-open Chameleon, confirm `C:\Temp\jumper-bho.log` grows → open the popup,
-confirm Settings loads (proves the native host + pipe round-trip).
+startup, and the Enterprise Mode list must load) → **log out of Chameleon and
+log back in** (restored/pre-existing sessions do not reissue the cookies) →
+confirm `C:\Temp\jumper-bho.log` grows → open the popup, confirm Settings loads
+(native host + pipe), then run **Probe sector** (shared session).
 
 **8.7 Local dev loop:**
 - `JumperBho.dll` is locked by `iexplore.exe` **and** `explorer.exe` — kill both
@@ -422,6 +423,13 @@ Get-Content C:\Temp\jumper-bho.log |
 Healthy signatures: `[sites] Registered site; N live site(s)` and
 `[dept-tab] state changed: ... -> ...`. Normal Gecko clicks should produce no
 bare-host `http://chsw/...` BHO navigation or patient command.
+
+If patient clicks are intercepted but nothing opens, run **Probe sector** in
+the extension popup. `GetUserDetails returned no valid User_Details/@Sector`
+after installing the site list means Chromium still lacks the Chameleon
+session cookies. Confirm Edge cached the `<shared-cookie>` entries, then log out
+of Chameleon completely and log back in; merely reopening a restored,
+already-authenticated tab is not enough.
 
 **Watch the `pid=` prefix** — multiple `iexplore.exe` processes log to the same
 file; a command answered by the wrong pid is §5.3.

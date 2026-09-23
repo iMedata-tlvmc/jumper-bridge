@@ -1138,7 +1138,7 @@ native host now only queries that state and launches Namer.
 `install-jumper-bridge.ps1` now reads the current
 `InternetExplorerIntegrationSiteList` policy, saves the original source under
 `HKCU\Software\JumperBridge`, downloads that list, replaces/adds the three
-Chameleon `<shared-cookie>` entries, increments the list version, and writes:
+Chameleon `<shared-cookie>` entries, assigns a monotonic list version, and writes:
 
     %ProgramData%\JumperBridge\sites-with-shared-cookies.xml
 
@@ -1146,3 +1146,22 @@ It then points the current user's Edge policy to the local `file:///` URI.
 Re-running refreshes the merged copy from the saved corporate source. The
 preferred production state remains adding the entries to the centrally hosted
 list so updates require no per-machine refresh.
+
+### Post-install verification: a fresh login is mandatory
+
+The first live installation initially produced silent patient clicks. Evidence
+showed:
+
+- document-start interception was working (no signal navigation reached IE);
+- native department polling and the rebuilt BHO were healthy;
+- Edge's cached `SiteList.xml` contained all three shared-cookie rules;
+- **Probe sector** reached `GetUserDetails` but returned no
+  `User_Details/@Sector`;
+- Chromium's cookie database contained only `AWSALB*`, not
+  `.CHAMELEONAUTH`, `ASP.NET_SessionId`, or `_cu`.
+
+The Chameleon tab had restored/logged in before fresh cookies were issued under
+the newly loaded policy. A complete Chameleon logout followed by login fixed
+the sector probe and patient opening immediately. Therefore every installation
+must fully restart Edge and then explicitly log out/in once; restoring an
+existing authenticated session is insufficient.

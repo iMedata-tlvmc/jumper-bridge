@@ -104,12 +104,17 @@ that file to match (no rebuild/re-registration needed, it's read fresh).
 ## Verify
 
 1. Fully restart Edge (BHO activation keys are read once, at IE-mode host
-   startup).
-2. Open a Chameleon IE-mode tab; confirm `C:\Temp\jumper-bho.log` is growing.
-3. Confirm `C:\Temp\jumper-native-host.log` is growing (the extension polls
+   startup, and the new Enterprise Mode list must be loaded).
+2. **Log out of Chameleon completely, then log back in.** Restoring an existing
+   login is insufficient: the session cookies must be freshly issued after the
+   shared-cookie rules are active.
+3. Open a Chameleon IE-mode tab; confirm `C:\Temp\jumper-bho.log` is growing.
+4. Confirm `C:\Temp\jumper-native-host.log` is growing (the extension polls
    it every ~1.5s).
-4. Open the extension popup; confirm Settings loads (proves the native host +
+5. Open the extension popup; confirm Settings loads (proves the native host +
    named-pipe round-trip end to end).
+6. Click **Probe sector**; a returned sector confirms the Chromium side has the
+   shared Chameleon session.
 
 ## Dev loop
 
