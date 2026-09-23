@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -36,6 +38,34 @@ namespace JumperNativeHost
             }
         }
 
+        // The log file is plaintext on disk (C:\Temp) and may be copied into a
+        // support ticket, so patient numbers are masked before being written -
+        // keep the last 3 digits for troubleshooting, mask the rest.
+        private static string MaskPatnum(string patnum)
+        {
+            if (string.IsNullOrEmpty(patnum)) return patnum;
+            return patnum.Length <= 3
+                ? new string('*', patnum.Length)
+                : new string('*', patnum.Length - 3) + patnum.Substring(patnum.Length - 3);
+        }
+
+        // Best-effort: the only PHI-shaped field in native messages today is
+        // "patnum". Mask its value inside the raw JSON before it hits the log.
+        private static string RedactPatnumInJson(string json)
+        {
+            try
+            {
+                return Regex.Replace(
+                    json,
+                    "(\"patnum\"\\s*:\\s*\")(\\d+)(\")",
+                    m => m.Groups[1].Value + MaskPatnum(m.Groups[2].Value) + m.Groups[3].Value);
+            }
+            catch
+            {
+                return "[unredactable]";
+            }
+        }
+
         private static int Main(string[] args)
         {
             Log("JumperNativeHost started.");
@@ -62,7 +92,7 @@ namespace JumperNativeHost
                     }
 
                     string json = Encoding.UTF8.GetString(payload);
-                    Log($"Received: {json}");
+                    Log($"Received: {RedactPatnumInJson(json)}");
 
                     Dictionary<string, object> response;
                     try
@@ -75,7 +105,7 @@ namespace JumperNativeHost
                             string patnum = msg.TryGetValue("patnum", out var p) && p != null ? p.ToString() : null;
                             LaunchNamer(patnum);
                             response = new Dictionary<string, object> { { "ok", true } };
-                            Log($"LAUNCH_NAMER -> patnum={patnum}");
+                            Log($"LAUNCH_NAMER -> patnum={MaskPatnum(patnum)}");
                         }
                         else
                         {
@@ -119,6 +149,7 @@ namespace JumperNativeHost
             }
 
             EnsureSapLogonRunning();
+            LogExecutableIntegrity(NamerPath);
 
             Process.Start(new ProcessStartInfo
             {
@@ -126,6 +157,42 @@ namespace JumperNativeHost
                 Arguments = "PROD " + patnum + " " + patnum,
                 UseShellExecute = true,
             });
+        }
+
+        // SECURITY (advisory, not enforced): NamerPath is a UNC path on a file
+        // share, not a locally-installed executable, so unlike SapLogonPath it
+        // has no local ACL/AV protection we control. This does NOT block the
+        // launch - we don't know whether NamerButton.exe is Authenticode-signed
+        // by SAP/IT, so a hard fail-closed check here risks breaking a live
+        // clinical workflow (opening Namer) on unverified assumptions.
+        // Instead we log the file's SHA-256 hash and signature status every
+        // launch, giving IT an audit trail to detect tampering after the fact
+        // and a basis for turning this into a hard pin once the real signing
+        // status is confirmed. See docs/decisions.md.
+        private static void LogExecutableIntegrity(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    Log($"INTEGRITY_CHECK {path} -> file not found (skipped).");
+                    return;
+                }
+
+                string hash;
+                using (var sha256 = SHA256.Create())
+                using (var stream = File.OpenRead(path))
+                {
+                    hash = BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                }
+
+                bool trusted = Authenticode.IsSignedAndTrusted(path);
+                Log($"INTEGRITY_CHECK {path} -> sha256={hash} signedAndTrusted={trusted}");
+            }
+            catch (Exception ex)
+            {
+                Log($"INTEGRITY_CHECK {path} -> failed: {ex.Message}");
+            }
         }
 
         // Mirrors Chameleon.EnsureSapLogonRunning - NamerButton.exe throws a VBS
@@ -171,6 +238,100 @@ namespace JumperNativeHost
             stdout.Write(length, 0, length.Length);
             stdout.Write(payload, 0, payload.Length);
             stdout.Flush();
+        }
+    }
+
+    // Thin WinVerifyTrust wrapper: reports whether a file has an Authenticode
+    // signature that chains to a trusted root, without requiring a network
+    // round-trip (revocation checking is intentionally disabled, since this
+    // runs on a hospital LAN and must not hang/fail just because a CRL/OCSP
+    // endpoint is unreachable). Used for advisory logging only - see
+    // LogExecutableIntegrity above for why this isn't a hard gate.
+    internal static class Authenticode
+    {
+        private const uint WTD_UI_NONE = 2;
+        private const uint WTD_REVOKE_NONE = 0;
+        private const uint WTD_CHOICE_FILE = 1;
+        private const uint WTD_STATEACTION_VERIFY = 1;
+        private const uint WTD_STATEACTION_CLOSE = 2;
+        private static readonly Guid WINTRUST_ACTION_GENERIC_VERIFY_V2 = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WINTRUST_FILE_INFO
+        {
+            public uint cbStruct;
+            public string pcwszFilePath;
+            public IntPtr hFile;
+            public IntPtr pgKnownSubject;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINTRUST_DATA
+        {
+            public uint cbStruct;
+            public IntPtr pPolicyCallbackData;
+            public IntPtr pSIPClientData;
+            public uint dwUIChoice;
+            public uint fdwRevocationChecks;
+            public uint dwUnionChoice;
+            public IntPtr pInfoStruct;
+            public uint dwStateAction;
+            public IntPtr hWVTStateData;
+            public string pwszURLReference;
+            public uint dwProvFlags;
+            public uint dwUIContext;
+            public IntPtr pSignatureSettings;
+        }
+
+        [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid pgActionID, IntPtr pWVTData);
+
+        public static bool IsSignedAndTrusted(string filePath)
+        {
+            var fileInfo = new WINTRUST_FILE_INFO
+            {
+                cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_FILE_INFO)),
+                pcwszFilePath = filePath,
+            };
+
+            IntPtr fileInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf(fileInfo));
+            IntPtr dataPtr = IntPtr.Zero;
+            try
+            {
+                Marshal.StructureToPtr(fileInfo, fileInfoPtr, false);
+
+                var data = new WINTRUST_DATA
+                {
+                    cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_DATA)),
+                    dwUIChoice = WTD_UI_NONE,
+                    fdwRevocationChecks = WTD_REVOKE_NONE,
+                    dwUnionChoice = WTD_CHOICE_FILE,
+                    pInfoStruct = fileInfoPtr,
+                    dwStateAction = WTD_STATEACTION_VERIFY,
+                };
+
+                dataPtr = Marshal.AllocHGlobal(Marshal.SizeOf(data));
+                Marshal.StructureToPtr(data, dataPtr, false);
+
+                int result = WinVerifyTrust(new IntPtr(-1), WINTRUST_ACTION_GENERIC_VERIFY_V2, dataPtr);
+
+                // Always release the state handle WinVerifyTrust allocated,
+                // regardless of the verification result.
+                data.dwStateAction = WTD_STATEACTION_CLOSE;
+                Marshal.StructureToPtr(data, dataPtr, true);
+                WinVerifyTrust(new IntPtr(-1), WINTRUST_ACTION_GENERIC_VERIFY_V2, dataPtr);
+
+                return result == 0; // 0 == ERROR_SUCCESS: fully trusted chain.
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(fileInfoPtr);
+                if (dataPtr != IntPtr.Zero) Marshal.FreeHGlobal(dataPtr);
+            }
         }
     }
 }

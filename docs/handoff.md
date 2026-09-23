@@ -125,6 +125,20 @@ extension, because interception scripts are installed at document start.
 `native-host/com.jumper.native_host.json`, rerun the installer, and inspect
 `C:\Temp\jumper-native-host.log`.
 
+**Namer integrity warnings in the log:** `LaunchNamer` logs an
+`INTEGRITY_CHECK` line (SHA-256 + Authenticode trust) each launch. It is
+advisory only and never blocks the launch — see the security review section
+in `docs/decisions.md` for why.
+
+## Security
+
+`docs/decisions.md` has a "Security review" section listing what was
+hardened here (PHI-redacted logs, Namer executable integrity logging, DNR
+rule scope audit) versus what is accepted or out of scope for this repo
+(plain-HTTP Chameleon, the cookie-sharing attack surface itself, other
+extensions in the same profile, unpacked-extension/site-list tampering by
+the same user, and Chameleon's lack of CSRF protection).
+
 ## Key files
 
 - `edge/background.js`

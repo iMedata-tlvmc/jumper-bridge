@@ -27,6 +27,36 @@ function appendLog(entry) {
   return logWriteQueue;
 }
 
+// The persisted navLog is surfaced verbatim on the Diagnostics page and is
+// the first thing anyone (including us) copies into a support ticket, so
+// patient identifiers are masked before anything is logged - keep the last 3
+// characters for troubleshooting, mask the rest.
+function maskIdentifier(value) {
+  if (value === null || value === undefined) return value;
+  const str = String(value);
+  return str.length <= 3 ? "*".repeat(str.length) : "*".repeat(str.length - 3) + str.slice(-3);
+}
+
+// Signal/deep-link URLs carry patient identifiers as query params
+// (Patient/PatientID/PatientNum/idnum/MedicalRecord/Unit). Mask just those
+// values so the rest of the URL (host, path, other flags) stays readable for
+// debugging.
+const PHI_URL_PARAMS = ["Patient", "PatientID", "PatientNum", "MedicalRecord", "idnum", "Unit"];
+function redactUrl(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    for (const param of PHI_URL_PARAMS) {
+      if (u.searchParams.has(param)) {
+        u.searchParams.set(param, maskIdentifier(u.searchParams.get(param)));
+      }
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 // The exact analogue of Gecko.cs's WebView_NewWindowRequested: fires only for
 // tabs created by window.open() / target=_blank, which are the only tabs that
 // may carry a modern-app signal URL.
@@ -489,7 +519,7 @@ async function probeMedOrderSector() {
 async function routePatientOpenViaSharedSession(sourceUrl, patient) {
   const primeUrl = signalUrlToChameleonUrl(sourceUrl);
   if (!primeUrl) {
-    appendLog({ event: "patientOpen.sharedSession.badSignalUrl", sourceUrl });
+    appendLog({ event: "patientOpen.sharedSession.badSignalUrl", sourceUrl: redactUrl(sourceUrl) });
     return { ok: false, error: "signal URL host is not an approved Chameleon host" };
   }
 
@@ -548,10 +578,10 @@ async function routePatientOpenViaSharedSession(sourceUrl, patient) {
       event: "patientOpen.sharedSession.navigated",
       tabId: chameleonTab.id,
       primeStatus: primeResponse.status,
-      correctedUrl: correctedUrl.toString(),
-      patient: patient.patient,
-      medicalRecord: patient.medicalRecord,
-      unit: patient.unit,
+      correctedUrl: redactUrl(correctedUrl.toString()),
+      patient: maskIdentifier(patient.patient),
+      medicalRecord: maskIdentifier(patient.medicalRecord),
+      unit: maskIdentifier(patient.unit),
     });
     return {
       ok: true,
@@ -562,7 +592,7 @@ async function routePatientOpenViaSharedSession(sourceUrl, patient) {
   } catch (err) {
     appendLog({
       event: "patientOpen.sharedSession.failed",
-      sourceUrl,
+      sourceUrl: redactUrl(sourceUrl),
       error: String(err),
     });
     return { ok: false, error: String(err) };
@@ -604,14 +634,14 @@ async function routeViaNewTab(target) {
 
   const tab = await createTabInNormalWindow({ url });
   await chrome.windows.update(tab.windowId, { focused: true });
-  appendLog({ event: "bridge.routed", label: target.label, mechanism: "newTab", url, tabId: tab.id });
+  appendLog({ event: "bridge.routed", label: target.label, mechanism: "newTab", url: redactUrl(url), tabId: tab.id });
   return tab;
 }
 
 // Namer: launch the native SAP app. Nothing is opened in the browser at all.
 async function routeViaNamer(target) {
   const response = await sendNativeCommand({ type: "launchNamer", patnum: target.patnum }, 15000);
-  appendLog({ event: "bridge.routed", label: target.label, mechanism: "namer", patnum: target.patnum, response });
+  appendLog({ event: "bridge.routed", label: target.label, mechanism: "namer", patnum: maskIdentifier(target.patnum), response });
   return response;
 }
 
@@ -626,7 +656,7 @@ async function routeViaNavigation(target) {
   }
   await chrome.tabs.update(chameleonTab.id, { active: true });
   await chrome.windows.update(chameleonTab.windowId, { focused: true });
-  appendLog({ event: "bridge.routed", label: target.label, mechanism: "navigate", url: target.url, tabId: chameleonTab.id });
+  appendLog({ event: "bridge.routed", label: target.label, mechanism: "navigate", url: redactUrl(target.url), tabId: chameleonTab.id });
   return chameleonTab;
 }
 
@@ -685,7 +715,7 @@ async function routeModernSignal(url, context = {}) {
       event: "bridge.intercepted",
       tabId,
       source,
-      sourceUrl: url,
+      sourceUrl: redactUrl(url),
       label: "Patient(shared session)"
     });
     if (closeTab && typeof tabId === "number") {
@@ -703,7 +733,7 @@ async function routeModernSignal(url, context = {}) {
   if (!target) return false;
 
   if (typeof tabId === "number") handledPopupTabIds.add(tabId);
-  appendLog({ event: "bridge.intercepted", tabId, source, sourceUrl: url, label: target.label });
+  appendLog({ event: "bridge.intercepted", tabId, source, sourceUrl: redactUrl(url), label: target.label });
 
   if (closeTab && typeof tabId === "number") {
     try {
