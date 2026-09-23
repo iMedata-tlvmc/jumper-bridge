@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Jumper Bridge (POC)",
-  "version": "1.1.0",
-  "description": "Bridges the modern Gecko web app to Chameleon using shared-session navigation, a compact launcher, and Namer integration.",
+  "version": "1.2.0",
+  "description": "Bridges the modern Gecko web app to Chameleon using shared-session navigation, a compact toolbar popup, an optional side panel, and Namer integration.",
   "permissions": [
     "tabs",
     "webNavigation",
     "storage",
     "declarativeNetRequest",
-    "nativeMessaging"
+    "nativeMessaging",
+    "sidePanel"
   ],
   "host_permissions": [
     "http://chsw.tasmc.corp/*",
@@ -56,7 +57,11 @@
     ]
   },
   "action": {
+    "default_popup": "launcher.html",
     "default_title": "Jumper Bridge (POC)"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "options_ui": {
     "page": "diagnostics.html",

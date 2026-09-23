@@ -4,9 +4,8 @@ An unpacked Manifest V3 extension that connects Gecko to Chameleon in Edge IE
 mode. Patient opening and Med Orders use the shared authenticated Chameleon
 session. The only native dependency is the Namer launcher.
 
-Automatic Chameleon **מחלקות → Gecko** switching has been removed. The side
-panel has also been removed; manual navigation is available from the standalone
-launcher window.
+Automatic Chameleon **מחלקות → Gecko** switching has been removed. Manual
+navigation is available from the toolbar popup and optional side panel.
 
 To restore the previous automatic behavior, something must detect the active
 **מחלקות** state inside Chameleon's Trident DOM. Extensions cannot access an
@@ -40,23 +39,27 @@ worker routes them as follows:
 | Other supported Chameleon pages | New tab or existing Chameleon tab |
 | Namer | One-shot native message to launch `NamerButton.exe` |
 
-## Launcher
+## Toolbar popup
 
-Click the extension toolbar icon to open a compact standalone launcher with
-buttons for Chameleon, Consultations, Nursing, and ER. Clicking the icon again
-focuses the existing launcher instead of creating another window. Closing the
-launcher is safe; the next click discards any stale saved window ID and creates a
-new instance.
+Click the extension toolbar icon to open a compact popup with buttons for
+Chameleon, Consultations, Nursing, and ER. It also provides **Open side panel**
+and **Diagnostics** controls.
 
 The buttons reuse the service worker's existing `openChameleonTab` and
 `openGeckoDept` message routes, so patient, Med Orders, Namer, and all other
 Gecko-to-Chameleon behavior is unchanged.
 
+## Side panel
+
+The optional side panel provides the same four routing buttons and a Gecko
+preview. It opens only from the explicit popup button and does not react
+automatically to Chameleon state.
+
 ## Diagnostics and settings
 
-Use **Diagnostics and settings** in the launcher or open the extension's standard
-Options page. This page contains the event log, Hospital ID setting, authenticated
-sector probe, signal simulator, and output pane.
+Use **Diagnostics** in the popup or open the extension's standard Options page.
+This page contains the event log, Hospital ID setting, authenticated sector
+probe, signal simulator, and output pane.
 
 ## Safety
 

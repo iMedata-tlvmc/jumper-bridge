@@ -1,0 +1,85 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f3f4f6;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid #d1d5db;
+}
+
+button {
+  min-height: 56px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #fff;
+  font: 600 13px "Segoe UI", sans-serif;
+}
+
+.chameleon {
+  background: #047857;
+}
+
+.consultations {
+  background: #1d4ed8;
+}
+
+.nursing {
+  background: #6d28d9;
+}
+
+.er {
+  background: #b91c1c;
+}
+
+.toggle {
+  grid-column: 1 / -1;
+  min-height: 36px;
+  border: 1px solid #9ca3af;
+  background: #fff;
+  color: #1f2937;
+}
+
+#frame {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+}
+
+body.frame-hidden #frame {
+  display: none;
+}
+
+#error {
+  display: none;
+  padding: 16px;
+  color: #374151;
+  font-size: 13px;
+}
+
+#error button {
+  min-height: 36px;
+  background: #1d4ed8;
+}

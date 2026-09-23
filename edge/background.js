@@ -11,10 +11,6 @@
 // the exact error (if any) rather than crashing the service worker.
 
 const MAX_LOG_ENTRIES = 200;
-const LAUNCHER_WINDOW_ID_KEY = "launcherWindowId";
-const LAUNCHER_URL = chrome.runtime.getURL("launcher.html");
-const LAUNCHER_WIDTH = 340;
-const LAUNCHER_HEIGHT = 390;
 
 // Serializes writes to chrome.storage.local so concurrent appendLog() calls
 // (e.g. tabs.onCreated + tabs.onUpdated firing close together) don't clobber
@@ -54,84 +50,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // Keep the interception bookkeeping from growing without bound.
   handledPopupTabIds.delete(tabId);
   popupCandidateTabIds.delete(tabId);
-});
-
-function isLauncherWindow(browserWindow) {
-  return browserWindow.type === "popup" &&
-    browserWindow.tabs?.some((tab) => tab.url === LAUNCHER_URL);
-}
-
-async function focusLauncherWindow(browserWindow) {
-  await chrome.windows.update(browserWindow.id, {
-    focused: true,
-    state: "normal",
-  });
-  await chrome.storage.local.set({ [LAUNCHER_WINDOW_ID_KEY]: browserWindow.id });
-  appendLog({ event: "launcher.focused", windowId: browserWindow.id });
-}
-
-async function findExistingLauncherWindow(savedWindowId) {
-  if (Number.isInteger(savedWindowId)) {
-    try {
-      const savedWindow = await chrome.windows.get(savedWindowId, { populate: true });
-      if (isLauncherWindow(savedWindow)) return savedWindow;
-    } catch {
-      // The saved ID is stale after the launcher or Edge was closed.
-    }
-    await chrome.storage.local.remove(LAUNCHER_WINDOW_ID_KEY);
-  }
-
-  const popupWindows = await chrome.windows.getAll({
-    populate: true,
-    windowTypes: ["popup"],
-  });
-  return popupWindows.find(isLauncherWindow) || null;
-}
-
-async function openOrFocusLauncher() {
-  const stored = await chrome.storage.local.get(LAUNCHER_WINDOW_ID_KEY);
-  const existingWindow = await findExistingLauncherWindow(
-    stored[LAUNCHER_WINDOW_ID_KEY]
-  );
-
-  if (existingWindow) {
-    await focusLauncherWindow(existingWindow);
-    return;
-  }
-
-  const launcherWindow = await chrome.windows.create({
-    url: LAUNCHER_URL,
-    type: "popup",
-    width: LAUNCHER_WIDTH,
-    height: LAUNCHER_HEIGHT,
-    focused: true,
-  });
-  if (!Number.isInteger(launcherWindow.id)) {
-    throw new Error("Edge did not return a launcher window ID.");
-  }
-
-  await chrome.storage.local.set({
-    [LAUNCHER_WINDOW_ID_KEY]: launcherWindow.id,
-  });
-  appendLog({ event: "launcher.opened", windowId: launcherWindow.id });
-}
-
-let launcherWindowOperation = Promise.resolve();
-
-chrome.action.onClicked.addListener(() => {
-  launcherWindowOperation = launcherWindowOperation
-    .then(() => openOrFocusLauncher())
-    .catch((err) => appendLog({
-      event: "launcher.failed",
-      error: String(err && err.message ? err.message : err),
-    }));
-});
-
-chrome.windows.onRemoved.addListener(async (windowId) => {
-  const stored = await chrome.storage.local.get(LAUNCHER_WINDOW_ID_KEY);
-  if (stored[LAUNCHER_WINDOW_ID_KEY] === windowId) {
-    await chrome.storage.local.remove(LAUNCHER_WINDOW_ID_KEY);
-  }
 });
 
 async function getNormalBrowserWindow() {
@@ -455,7 +373,7 @@ function signalUrlToChameleonUrl(sourceUrl) {
 }
 
 // Finds (or creates) the Chameleon tab and focuses it, without navigating it
-// anywhere - used by the standalone launcher's "Chameleon" button.
+// anywhere - used by the popup and side panel "Chameleon" buttons.
 async function openChameleonTab() {
   const tabs = await chrome.tabs.query({ url: `${CHAMELEON_BASE_URL}/*` });
   let chameleonTab = tabs[0];
@@ -463,11 +381,11 @@ async function openChameleonTab() {
     chameleonTab = await createTabInNormalWindow({
       url: `${CHAMELEON_BASE_URL}/Chameleon/Account/LogOn`,
     });
-    appendLog({ event: "launcher.openedChameleonTab", tabId: chameleonTab.id });
+    appendLog({ event: "manualNav.openedChameleonTab", tabId: chameleonTab.id });
   } else {
     await chrome.tabs.update(chameleonTab.id, { active: true });
     await chrome.windows.update(chameleonTab.windowId, { focused: true });
-    appendLog({ event: "launcher.focusedChameleonTab", tabId: chameleonTab.id });
+    appendLog({ event: "manualNav.focusedChameleonTab", tabId: chameleonTab.id });
   }
   return chameleonTab;
 }
@@ -483,7 +401,7 @@ function isInsideGeckoSection(tabUrl, deptUrl) {
 }
 
 // Finds any existing gecko (inextdata) tab and navigates it to `url`, or
-// creates one if none exists - used by the standalone launcher's department buttons.
+// creates one if none exists - used by the popup and side panel department buttons.
 // Deliberately enforces a single Gecko tab. It re-navigates an existing Gecko
 // tab unless that tab is already showing the requested section or a subpage.
 async function openGeckoTabWithUrl(url) {
@@ -491,13 +409,13 @@ async function openGeckoTabWithUrl(url) {
   let geckoTab = tabs[0];
   if (!geckoTab) {
     geckoTab = await createTabInNormalWindow({ url });
-    appendLog({ event: "launcher.openedGeckoTab", tabId: geckoTab.id, url });
+    appendLog({ event: "manualNav.openedGeckoTab", tabId: geckoTab.id, url });
   } else if (isInsideGeckoSection(geckoTab.url, url)) {
     await chrome.tabs.update(geckoTab.id, { active: true });
-    appendLog({ event: "launcher.focusedGeckoTab", tabId: geckoTab.id, url: geckoTab.url });
+    appendLog({ event: "manualNav.focusedGeckoTab", tabId: geckoTab.id, url: geckoTab.url });
   } else {
     await chrome.tabs.update(geckoTab.id, { url, active: true });
-    appendLog({ event: "launcher.navigatedGeckoTab", tabId: geckoTab.id, url });
+    appendLog({ event: "manualNav.navigatedGeckoTab", tabId: geckoTab.id, url });
   }
   await chrome.windows.update(geckoTab.windowId, { focused: true });
   return geckoTab;

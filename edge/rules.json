@@ -7,5 +7,22 @@
       "requestDomains": ["chsw"],
       "resourceTypes": ["main_frame", "sub_frame", "xmlhttprequest", "ping", "other"]
     }
+  },
+  {
+    "comment": "The optional side panel hosts the modern app in an iframe. Strip framing restrictions only for approved inextdata sub-frame requests.",
+    "id": 2,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "x-frame-options", "operation": "remove" },
+        { "header": "content-security-policy", "operation": "remove" },
+        { "header": "content-security-policy-report-only", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "requestDomains": ["inextdata.tasmc.corp", "dev-inextdata.tasmc.corp"],
+      "resourceTypes": ["sub_frame"]
+    }
   }
 ]

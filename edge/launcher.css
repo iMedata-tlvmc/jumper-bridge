@@ -8,6 +8,7 @@
 }
 
 body {
+  width: 320px;
   margin: 0;
   background: #f3f4f6;
   color: #111827;
@@ -70,9 +71,14 @@ button:disabled {
   background: #b91c1c;
 }
 
-.diagnostics {
-  width: 100%;
+.secondary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   margin-top: 12px;
+}
+
+.secondary-actions button {
   padding: 9px;
   border: 1px solid #9ca3af;
   background: #fff;

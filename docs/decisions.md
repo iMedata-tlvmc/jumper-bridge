@@ -31,7 +31,7 @@ Automatic Chameleon **מחלקות → Gecko** switching is no longer required.
 Therefore the BHO, COM registration, named pipe, shared protocol, department
 polling, and related display-mode setting were removed.
 
-Manual standalone-launcher buttons still navigate to Gecko sections.
+Manual popup and side-panel buttons still navigate to Gecko sections.
 
 If automatic switching based on Chameleon's active **מחלקות** view is requested
 again, a BHO or equivalent code running inside Trident is required because Edge
@@ -53,20 +53,19 @@ Chameleon modal dialogs created inside an unfocused IE-mode tab are not visible
 until the user switches tabs. Supported browser-page routes therefore use
 normal tabs, accepting the Fluid Balance close-tab prompt.
 
-## Use a compact single-instance launcher window
+## Use a compact toolbar popup with an optional side panel
 
-The wide side panel and its framed Gecko preview were replaced by a narrow
-standalone extension window created with `chrome.windows.create({ type:
-"popup" })`. The toolbar action opens this window or focuses the existing
-instance.
+The toolbar action uses a compact extension popup containing the four manual
+routing buttons. This avoids a persistent floating browser window while keeping
+the common actions immediately available.
 
-The service worker stores the window ID but verifies the window and launcher URL
-before focusing it. Missing, stale, or reused IDs are cleared, and existing
-launcher popup windows are discovered before a new one is created.
+The popup can explicitly open the Edge side panel from its user gesture. The
+panel retains the four routing buttons and Gecko preview, but no Chameleon state
+opens or focuses it automatically.
 
-The launcher remains extension-only and sends the existing manual routing
-messages. Diagnostics and Hospital ID configuration live on the standard
-extension Options page rather than in the normal toolbar action.
+Both interfaces remain extension-only and send the existing manual routing
+messages. Diagnostics and Hospital ID configuration remain on the standard
+extension Options page rather than in the normal four-button control surface.
 
 ## Use a local merged site list for the POC
 

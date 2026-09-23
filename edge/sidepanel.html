@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jumper Bridge side panel</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="toolbar">
+    <button class="route chameleon" data-message="openChameleonTab">Chameleon</button>
+    <button class="route consultations" data-dept="consultations">Consultations</button>
+    <button class="route nursing" data-dept="nursing">Nursing</button>
+    <button class="route er" data-dept="er">ER</button>
+    <button id="btnToggleFrame" class="toggle">Hide Gecko preview</button>
+  </div>
+  <iframe id="frame" title="Gecko preview" referrerpolicy="no-referrer-when-downgrade"></iframe>
+  <div id="error">
+    <strong>Gecko did not load in the side panel.</strong>
+    <p>The login redirect or server framing policy may still block the preview.</p>
+    <button id="btnOpenTab">Open Gecko in a tab</button>
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

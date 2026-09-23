@@ -29,6 +29,20 @@ document.querySelectorAll(".route").forEach((button) => {
   button.addEventListener("click", () => runRoute(button));
 });
 
+document.getElementById("btnOpenSidePanel").addEventListener("click", async () => {
+  try {
+    const browserWindow = await chrome.windows.getCurrent();
+    await chrome.sidePanel.setOptions({
+      path: "sidepanel.html",
+      enabled: true,
+    });
+    await chrome.sidePanel.open({ windowId: browserWindow.id });
+    window.close();
+  } catch (err) {
+    showStatus(String(err && err.message ? err.message : err), true);
+  }
+});
+
 document.getElementById("btnDiagnostics").addEventListener("click", async () => {
   try {
     await chrome.runtime.openOptionsPage();

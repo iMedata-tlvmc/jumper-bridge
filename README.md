@@ -4,7 +4,7 @@ Bridges the Gecko web app to the legacy Chameleon EHR in Edge IE mode.
 
 | Component | Path | Role |
 |---|---|---|
-| Edge extension | `edge/` | Intercepts Gecko signals, opens patients and Chameleon pages, resolves Med Orders sectors, and provides a compact manual launcher |
+| Edge extension | `edge/` | Intercepts Gecko signals, opens patients and Chameleon pages, resolves Med Orders sectors, and provides compact popup and side-panel controls |
 | Native messaging host | `native-host/` | Launches the hospital Namer application |
 
 Automatic Chameleon **מחלקות → Gecko** switching has been removed. There is no
@@ -60,12 +60,12 @@ moves, update `allowed_origins` in
   `MedOrdersFrm.aspx` with the returned sector.
 - Other supported Chameleon links: normal tab or existing-tab navigation.
 - Namer: one-shot native message launches `\\focus-fs\sap$\NamerButton.exe`.
-- Toolbar launcher: manual navigation between Chameleon, Consultations, Nursing,
-  and ER without opening duplicate launcher windows.
+- Toolbar popup: manual navigation between Chameleon, Consultations, Nursing,
+  and ER, plus an option to open the Gecko side panel.
 
-Click the extension toolbar icon to open or focus the compact launcher. Use
-**Diagnostics and settings** in that window, or the extension's standard Options
-page, for the event log, Hospital ID, sector probe, and signal simulator.
+Click the extension toolbar icon to open the four-button popup. Use **Open side
+panel** for the persistent panel and **Diagnostics** (or the extension's standard
+Options page) for the event log, Hospital ID, sector probe, and signal simulator.
 
 See [`docs/handoff.md`](docs/handoff.md) for operations and
 [`docs/decisions.md`](docs/decisions.md) for current design constraints.
