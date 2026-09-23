@@ -33,6 +33,12 @@ polling, and related display-mode setting were removed.
 
 Manual side-panel buttons still navigate to Gecko sections.
 
+If automatic switching based on Chameleon's active **מחלקות** view is requested
+again, a BHO or equivalent code running inside Trident is required because Edge
+extensions cannot inspect IE-mode DOM state. The BHO would detect the state and
+relay it to the extension; it would not be needed for manual navigation or
+Gecko-to-Chameleon routing.
+
 ## Keep the native host only for Namer
 
 Namer is a hospital native application rather than a web route. A small native

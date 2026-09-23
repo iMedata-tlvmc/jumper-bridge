@@ -10,6 +10,15 @@ Bridges the Gecko web app to the legacy Chameleon EHR in Edge IE mode.
 Automatic Chameleon **מחלקות → Gecko** switching has been removed. There is no
 BHO, COM component, named pipe, or continuous native-host polling.
 
+### If Chameleon-to-Gecko switching returns
+
+The previous automatic switch depended on reading Chameleon's IE-mode DOM when
+the **מחלקות** view became active. Edge extensions cannot inspect that
+Trident-rendered DOM, so this trigger would require a BHO loaded inside the
+IE-mode process and a relay back to the extension. A direct link added to
+Chameleon itself would not require DOM detection, but that is a different
+implementation.
+
 ## Requirements
 
 - Chameleon already opens in Edge IE mode.

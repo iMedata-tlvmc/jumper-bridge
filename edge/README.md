@@ -7,6 +7,12 @@ session. The only native dependency is the Namer launcher.
 Automatic Chameleon **מחלקות → Gecko** switching has been removed. The side
 panel's buttons remain available for manual navigation.
 
+To restore the previous automatic behavior, something must detect the active
+**מחלקות** state inside Chameleon's Trident DOM. Extensions cannot access an
+IE-mode document, so that specific trigger requires a BHO in the IE-mode process
+and a bridge back to the extension. The BHO is not needed for the current manual
+buttons or Gecko-to-Chameleon routes.
+
 ## Prerequisites
 
 - Chameleon already opens in Edge IE mode.

@@ -20,6 +20,18 @@ Gecko
 There is no BHO, COM browser component, named pipe, department-state detector,
 or automatic Chameleon **מחלקות → Gecko** switching.
 
+## Conditional BHO boundary
+
+The retired BHO would be needed only to restore the previous automatic
+Chameleon-to-Gecko transition based on Chameleon's page state. IE-mode content
+is rendered by Trident in a separate process, and Edge extension APIs cannot
+inspect its DOM. A BHO loaded by Trident can observe the active **מחלקות** view;
+that state would then need to be relayed to the extension so it could focus or
+open Gecko.
+
+This does not apply to the current manual side-panel buttons, Gecko-originated
+signals, or a hypothetical direct Gecko link implemented inside Chameleon.
+
 ## Signal interception
 
 `page-window-open-bridge.js` wraps recognized `window.open()` calls in Gecko's
