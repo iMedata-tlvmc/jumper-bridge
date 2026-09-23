@@ -31,7 +31,7 @@ Automatic Chameleon **מחלקות → Gecko** switching is no longer required.
 Therefore the BHO, COM registration, named pipe, shared protocol, department
 polling, and related display-mode setting were removed.
 
-Manual side-panel buttons still navigate to Gecko sections.
+Manual standalone-launcher buttons still navigate to Gecko sections.
 
 If automatic switching based on Chameleon's active **מחלקות** view is requested
 again, a BHO or equivalent code running inside Trident is required because Edge
@@ -53,11 +53,20 @@ Chameleon modal dialogs created inside an unfocused IE-mode tab are not visible
 until the user switches tabs. Supported browser-page routes therefore use
 normal tabs, accepting the Fluid Balance close-tab prompt.
 
-## Keep the side panel manual and optional
+## Use a compact single-instance launcher window
 
-The side panel is Chromium browser UI and can render Gecko beside an IE-mode
-tab. `chrome.sidePanel.open()` requires a user gesture, so the popup opens it
-directly. No Chameleon state automatically opens or focuses it.
+The wide side panel and its framed Gecko preview were replaced by a narrow
+standalone extension window created with `chrome.windows.create({ type:
+"popup" })`. The toolbar action opens this window or focuses the existing
+instance.
+
+The service worker stores the window ID but verifies the window and launcher URL
+before focusing it. Missing, stale, or reused IDs are cleared, and existing
+launcher popup windows are discovered before a new one is created.
+
+The launcher remains extension-only and sends the existing manual routing
+messages. Diagnostics and Hospital ID configuration live on the standard
+extension Options page rather than in the normal toolbar action.
 
 ## Use a local merged site list for the POC
 

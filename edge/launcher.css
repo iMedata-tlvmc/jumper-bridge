@@ -1,0 +1,92 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f3f4f6;
+  color: #111827;
+}
+
+main {
+  padding: 16px;
+}
+
+h1 {
+  margin: 0 0 14px;
+  font-size: 20px;
+  text-align: center;
+}
+
+.routes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+button:focus-visible {
+  outline: 3px solid #111827;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.route {
+  min-height: 76px;
+  padding: 12px 8px;
+  color: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+}
+
+.chameleon {
+  background: #047857;
+}
+
+.consultations {
+  background: #1d4ed8;
+}
+
+.nursing {
+  background: #6d28d9;
+}
+
+.er {
+  background: #b91c1c;
+}
+
+.diagnostics {
+  width: 100%;
+  margin-top: 12px;
+  padding: 9px;
+  border: 1px solid #9ca3af;
+  background: #fff;
+  color: #1f2937;
+}
+
+#status {
+  min-height: 18px;
+  margin: 10px 2px 0;
+  color: #4b5563;
+  font-size: 12px;
+  text-align: center;
+}
+
+#status.error {
+  color: #b91c1c;
+}

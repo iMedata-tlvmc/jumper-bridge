@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jumper Bridge diagnostics</title>
+  <link rel="stylesheet" href="diagnostics.css" />
+</head>
+<body>
+  <main>
+    <h1>Jumper Bridge diagnostics</h1>
+
+    <section>
+      <h2>Bridge event log</h2>
+      <div class="row">
+        <button id="btnRefreshLog">Refresh log</button>
+        <button id="btnClearLog">Clear log</button>
+        <span class="hint">Bridge and launcher events, newest last</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Settings</h2>
+      <div class="row">
+        <label for="hospitalId">Hospital ID</label>
+        <input id="hospitalId" type="text" value="101" />
+        <button id="btnSaveHospital">Save</button>
+        <span class="hint">Used to build corrected patient URLs.</span>
+      </div>
+      <div class="row">
+        <button id="btnProbeMedOrderSector">Probe sector</button>
+        <span class="hint">Uses the authenticated Chameleon session without reading cookie values.</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Signal simulator</h2>
+      <div class="row">
+        <select id="simSelect">
+          <option value="patient">Patient open (shared session)</option>
+          <option value="lab">Lab</option>
+          <option value="newRecord">NewRecord</option>
+          <option value="fluidBalance">FluidBalance</option>
+        </select>
+      </div>
+      <div class="row">
+        <input id="simUrl" type="text" />
+        <button id="btnSimulate">Simulate window.open()</button>
+      </div>
+      <p class="hint">
+        Edit the placeholder Patient, Unit, Record, and related values before simulating.
+      </p>
+    </section>
+
+    <section>
+      <h2>Output</h2>
+      <pre id="output"></pre>
+    </section>
+  </main>
+  <script src="diagnostics.js"></script>
+</body>
+</html>

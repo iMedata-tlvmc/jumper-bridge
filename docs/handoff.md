@@ -13,7 +13,7 @@ Gecko
 
 | Component | Responsibility |
 |---|---|
-| `edge/` | Signal interception, Chameleon routing, shared-session requests, popup, and side panel |
+| `edge/` | Signal interception, Chameleon routing, shared-session requests, standalone launcher, and diagnostics |
 | `native-host/` | Validate a patient number and launch Namer |
 | `install-jumper-bridge.ps1` | Register the native host and install shared-cookie policy |
 
@@ -29,7 +29,7 @@ inspect its DOM. A BHO loaded by Trident can observe the active **מחלקות**
 that state would then need to be relayed to the extension so it could focus or
 open Gecko.
 
-This does not apply to the current manual side-panel buttons, Gecko-originated
+This does not apply to the current manual launcher buttons, Gecko-originated
 signals, or a hypothetical direct Gecko link implemented inside Chameleon.
 
 ## Signal interception
@@ -40,6 +40,22 @@ main world. `content-bridge.js` captures recognized anchor clicks. Both run at
 
 The service worker validates sender origins and known URL patterns. Popup and
 tab listeners remain defensive fallbacks.
+
+## Standalone launcher
+
+Clicking the extension toolbar icon opens a narrow `chrome.windows` popup with
+manual buttons for Chameleon, Consultations, Nursing, and ER. The launcher sends
+the existing `openChameleonTab` and `openGeckoDept` messages; routing remains in
+the service worker.
+
+The service worker persists the launcher window ID, verifies that the referenced
+window still contains `launcher.html`, and searches existing popup windows before
+creating one. Repeated toolbar clicks focus the current instance, while stale IDs
+left after a close or browser restart are discarded safely.
+
+The launcher includes a **Diagnostics and settings** button. The same page is
+available through Edge's standard extension Options entry and contains the event
+log, Hospital ID setting, sector probe, signal simulator, and output pane.
 
 ## Routes
 
@@ -98,9 +114,9 @@ Load or reload `C:\Dev\jumper-bridge\edge` in `edge://extensions`.
 
 ## Troubleshooting
 
-**Patient or Med Orders authentication fails:** run **Probe sector** in the
-popup. Restart Edge and perform a full Chameleon logout/login if no valid sector
-is returned.
+**Patient or Med Orders authentication fails:** open **Diagnostics and settings**
+from the launcher and run **Probe sector**. Restart Edge and perform a full
+Chameleon logout/login if no valid sector is returned.
 
 **Signals are not intercepted:** reload the Gecko page after reloading the
 extension, because interception scripts are installed at document start.
@@ -115,5 +131,7 @@ extension, because interception scripts are installed at document start.
 - `edge/content-bridge.js`
 - `edge/page-window-open-bridge.js`
 - `edge/manifest.json`
+- `edge/launcher.html`
+- `edge/diagnostics.html`
 - `native-host/Program.cs`
 - `install-jumper-bridge.ps1`

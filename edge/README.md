@@ -5,7 +5,8 @@ mode. Patient opening and Med Orders use the shared authenticated Chameleon
 session. The only native dependency is the Namer launcher.
 
 Automatic Chameleon **מחלקות → Gecko** switching has been removed. The side
-panel's buttons remain available for manual navigation.
+panel has also been removed; manual navigation is available from the standalone
+launcher window.
 
 To restore the previous automatic behavior, something must detect the active
 **מחלקות** state inside Chameleon's Trident DOM. Extensions cannot access an
@@ -39,17 +40,23 @@ worker routes them as follows:
 | Other supported Chameleon pages | New tab or existing Chameleon tab |
 | Namer | One-shot native message to launch `NamerButton.exe` |
 
-The popup provides the event log, Hospital ID setting, sector probe, simulation
-tools, and a user-gesture button for opening the side panel.
+## Launcher
 
-## Side panel
+Click the extension toolbar icon to open a compact standalone launcher with
+buttons for Chameleon, Consultations, Nursing, and ER. Clicking the icon again
+focuses the existing launcher instead of creating another window. Closing the
+launcher is safe; the next click discards any stale saved window ID and creates a
+new instance.
 
-The panel is browser UI rendered by Chromium beside the IE-mode tab. It can show
-Gecko and provides manual buttons for Chameleon, consultations, nursing, and ER.
-It does not react automatically to Chameleon page state.
+The buttons reuse the service worker's existing `openChameleonTab` and
+`openGeckoDept` message routes, so patient, Med Orders, Namer, and all other
+Gecko-to-Chameleon behavior is unchanged.
 
-Because a side panel can only use an extension-relative page, Gecko is framed.
-`rules.json` strips framing restrictions only for approved inextdata subframes.
+## Diagnostics and settings
+
+Use **Diagnostics and settings** in the launcher or open the extension's standard
+Options page. This page contains the event log, Hospital ID setting, authenticated
+sector probe, signal simulator, and output pane.
 
 ## Safety
 

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jumper Bridge</title>
+  <link rel="stylesheet" href="launcher.css" />
+</head>
+<body>
+  <main>
+    <h1>Jumper Bridge</h1>
+    <div class="routes">
+      <button class="route chameleon" data-message="openChameleonTab">Chameleon</button>
+      <button class="route consultations" data-dept="consultations">Consultations</button>
+      <button class="route nursing" data-dept="nursing">Nursing</button>
+      <button class="route er" data-dept="er">ER</button>
+    </div>
+    <button id="btnDiagnostics" class="diagnostics">Diagnostics and settings</button>
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script src="launcher.js"></script>
+</body>
+</html>
