@@ -2,13 +2,13 @@
 
 An unpacked Manifest V3 extension. Patient opening and Med Orders work extension-only when Edge Enterprise Mode
 cookie sharing is configured. The BHO/native host remain for department-tab
-detection, optional legacy patient mode, and native app launches:
+detection, and the native host also launches Namer:
 
 | Component | Location | Role |
 |---|---|---|
 | **This extension** | `C:\Dev\jumper-bridge\edge` | Intercepts the modern app's `window.open()` signal URLs and decides how to route each one |
-| Native messaging host | `C:\Dev\jumper-bridge\native-host` | `com.jumper.native_host` — stdio↔named-pipe relay |
-| BHO | `C:\Dev\jumper-bridge\bho-poc` | `JumperBho.dll`, loaded by Trident into `iexplore.exe`; drives Chameleon's `folderFrame` JS |
+| Native messaging host | `C:\Dev\jumper-bridge\native-host` | `com.jumper.native_host` — department-state bridge and Namer launcher |
+| BHO | `C:\Dev\jumper-bridge\bho-poc` | `JumperBho.dll`, loaded by Trident into `iexplore.exe`; reads department-tab state |
 
 Full background, architecture and gotchas:
 [`../docs/handoff.md`](../docs/handoff.md).
@@ -18,15 +18,17 @@ Full background, architecture and gotchas:
 `chrome.scripting.executeScript` and `chrome.debugger` **both fail against IE-mode
 content** — it is rendered by Trident in a separate process, not by Chromium. Both were
 tried and empirically ruled out. A Browser Helper Object loaded by Trident itself is the
-only way to inspect or execute Chameleon's in-page JavaScript. Patient opening and all
-current browser-page links use extension-only navigation. The BHO remains for
-department-tab detection and the optional legacy patient mode.
+only way to inspect Chameleon's in-page state. Patient opening and all
+current browser-page links use extension-only navigation. The BHO remains only
+for department-tab detection.
 
 ## Prerequisites
 
 - Chameleon (`http://chsw.tasmc.corp`) already opens in Edge IE mode on this machine
   (Enterprise Site List / neutral sites configured).
-- The Enterprise Mode Site List shares Chameleon's session cookies both ways:
+- The Enterprise Mode Site List shares Chameleon's session cookies both ways.
+  `install-jumper-bridge.ps1` adds these to a local merged copy of the currently
+  configured corporate list:
   ```xml
   <shared-cookie host="chsw.tasmc.corp" name=".CHAMELEONAUTH"
                  path="/" source-engine="Both" />
@@ -35,13 +37,15 @@ department-tab detection and the optional legacy patient mode.
   <shared-cookie host="chsw.tasmc.corp" name="_cu"
                  source-engine="Both" />
   ```
-- For department-tab detection and legacy patient mode, the BHO must be built and
+  Re-run the installer to pull later corporate site-list updates into that
+  local copy.
+- For department-tab detection, the BHO must be built and
   registered as admin (`register-bho.ps1`, or run
   `C:\Dev\jumper-bridge\install-jumper-bridge.ps1` to build+register both the
   BHO and native host in one elevated pass — this is the
   only step in the whole POC that needs elevation; see the handoff doc §8 for
   why).
-- For those BHO routes and native app launches, the native host must be built
+- For department detection and native app launches, the native host must be built
   and registered (`register-native-host.ps1`, no
   admin needed). Its
   `com.jumper.native_host.json` pins this extension's ID —
@@ -67,13 +71,11 @@ remain as defensive fallbacks.
 |---|---|
 | shared session | background QuickOpen prime + corrected `Home/Main` — patient clicks, extension-only |
 | shared session sector | authenticated `GetUserDetails` POST — Med Orders, extension-only |
-| BHO pipe | optional legacy patient mode |
 | `newTab` | plain new Chameleon tab — `OrdersForApprove`, `MedOrder`, `FluidBalance`, `Lab`, `ContagiousDisease`, `Cardio` |
 | `namer` | launches a native app |
 | `navigate` | navigates the existing Chameleon tab — `NewRecord` |
 
-`patientOpenMode: "sharedSession"` is the default. The `"url"` option remains
-only as a diagnostic fallback because it raises a false patient-not-found alert.
+Patient opening always uses the extension-only shared-session route.
 Med Orders always uses the extension-only shared-session sector lookup; the old
 native `querySector` route has been removed.
 

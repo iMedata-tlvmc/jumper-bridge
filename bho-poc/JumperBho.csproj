@@ -17,12 +17,6 @@
          for a local POC. Silences the "no strong name" build warning noise. -->
     <NoWarn>CS8021</NoWarn>
 
-    <!-- Needed for System.Windows.Forms.Control, used purely as a cheap way to
-         marshal calls from the background named-pipe listener thread back onto
-         the STA thread that owns the live COM objects (Control.Invoke posts a
-         message the control's HWND message loop - which IE-mode's host process
-         is already pumping - picks up and runs the delegate on). -->
-    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,4 +28,3 @@
   </ItemGroup>
 
 </Project>
-

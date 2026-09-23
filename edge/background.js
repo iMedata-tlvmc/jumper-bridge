@@ -105,34 +105,6 @@ const PATTERNS = {
   namer: /Chameleon\/Namer\?NamerNo=(\d+)/,
 };
 
-function formatDateDDMMYYYY(d) {
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()}`;
-}
-
-// Chameleon's deep link expects dd/MM/yyyy (observed: Start_Date=25%2F07%2F2023).
-// The modern app may send AdmissionDate as ISO ("2026-08-31T13:33:00") or
-// already as dd/MM/yyyy — normalize either to the format Chameleon expects.
-function normalizeToDDMMYYYY(raw) {
-  if (!raw) return raw;
-  // Already dd/MM/yyyy (or d/M/yyyy)?
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(raw)) return raw;
-  const parsed = new Date(raw);
-  if (isNaN(parsed.getTime())) return raw; // give up gracefully, pass through as-is
-  return formatDateDDMMYYYY(parsed);
-}
-
-// Hospital isn't in PATIENT_URL_PATTERN — inside OpenPatientRecord it's read
-// as a bare page-level global, not passed as an arg. We couldn't script-read
-// it from the IE-mode tab, so it's a configurable setting (default: the value
-// observed during POC, "101"). Adjust via the popup if your deployment
-// differs or spans multiple hospitals.
-async function getHospitalId() {
-  const { hospitalId } = await chrome.storage.local.get("hospitalId");
-  return hospitalId || "101";
-}
-
 function toAbsoluteChameleonUrl(relativeOrAbsolute) {
   if (/^https?:\/\//i.test(relativeOrAbsolute)) return relativeOrAbsolute;
   return `${CHAMELEON_BASE_URL}/${relativeOrAbsolute.replace(/^\/+/, "")}`;
@@ -159,9 +131,8 @@ function toAbsoluteChameleonUrl(relativeOrAbsolute) {
 async function buildChameleonTarget(sourceUrl) {
   let m;
 
-  // NOTE: the "patient" pattern (OpenPatientRecord) is handled earlier in
-  // maybeInterceptModernPopup via matchPatientCommand()+routePatientOpenViaBho
-  // (the BHO path, preserves full chrome) instead of here.
+  // NOTE: the patient pattern is handled earlier through the extension-only
+  // shared-session route.
 
   if ((m = sourceUrl.match(PATTERNS.lab))) {
     // OpenLabFromUrl: relative-from-/Chameleon URL, plus &Switch=1. Jumper
@@ -282,46 +253,25 @@ async function buildChameleonTarget(sourceUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 6: BHO bridge for patient-record opens.
-//
-// Instead of building the record-only deep-link URL (which loses Chameleon's
-// list/header chrome — see edge-extension-feasibility.md §7b), patient opens
-// are now relayed to the BHO running inside the live Chameleon IE-mode tab
-// via a native messaging host (com.jumper.native_host), which forwards a
-// pipe-delimited command over a named pipe ("\\.\pipe\JumperBhoBridge") that
-// the BHO listens on. The BHO calls OpenPatientRecord(...) directly on the
-// patient-list frame's own JS window, in place — same effect as a real user
-// click, full chrome preserved (confirmed empirically in the BHO POC).
+// Native messaging remains for department-state polling and Namer launch.
 // ---------------------------------------------------------------------------
 
 const NATIVE_HOST_NAME = "com.jumper.native_host";
 
-function matchPatientCommand(sourceUrl) {
+function matchPatientSignal(sourceUrl) {
   const m = sourceUrl.match(PATTERNS.patient);
   if (!m) return null;
-  const [, idNum, patientNum, medicalRecord, recordChar, unit, admissionDateRaw] = m;
-  const today = formatDateDDMMYYYY(new Date());
+  const [, idNum, patientNum, medicalRecord, , unit] = m;
   return {
     patient: patientNum,
     unit,
     medicalRecord,
-    recordChar: recordChar || "0",
-    // Not present in the modern app's signal URL — Record_Part/Unit_Name were
-    // guessed (0 / empty) in the BHO POC and still rendered the full page
-    // correctly. Id_Num defaults to the same hospitalId setting used
-    // elsewhere since OpenPatientRecord reads it similarly to Hospital.
-    recordPart: "0",
-    unitName: "",
-    admissionDate: normalizeToDDMMYYYY(admissionDateRaw),
-    endDate: today,
     idNum: idNum || "101",
   };
 }
 
-// Wraps chrome.runtime.connectNative in a promise: opens a fresh port per
-// command (simpler/more robust for a POC than keeping one long-lived port
-// alive across service-worker suspends), sends the message, resolves with
-// the host's JSON response (or rejects on timeout/disconnect).
+// Opens a short-lived native messaging port for one-shot actions such as
+// launching Namer. Department polling uses its own long-lived port below.
 function sendNativeCommand(message, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -420,67 +370,26 @@ async function getDisplayMode() {
 }
 
 // ---------------------------------------------------------------------------
-// Patient open strategy (storage key "patientOpenMode")
-//
-//   "sharedSession" - default. Uses Enterprise Mode bidirectional cookie
-//                     sharing to prime Chameleon's ASP session in Chromium,
-//                     then navigates IE mode to corrected Home/Main parameters.
-//   "bho"           - pipes OpenPatientRecord to the BHO.
-//   "url"           - degraded direct QuickOpen URL fallback.
-//
-// sharedSession requires these Enterprise Mode Site List entries:
+// Patient opening uses Enterprise Mode bidirectional cookie sharing to prime
+// Chameleon's ASP session in Chromium, then navigates IE mode to corrected
+// Home/Main parameters. It requires these Enterprise Mode Site List entries:
 //   <shared-cookie host="chsw.tasmc.corp" name=".CHAMELEONAUTH"
 //                  path="/" source-engine="Both" />
 //   <shared-cookie host="chsw.tasmc.corp" name="ASP.NET_SessionId"
 //                  path="/" source-engine="Both" />
 //   <shared-cookie host="chsw.tasmc.corp" name="_cu"
 //                  source-engine="Both" />
-//
-// The direct "url" mode is DEGRADED, knowingly:
-//   - a spurious `מטופל/ת לא נמצא/ה במערכת` alert fires on EVERY open and must
-//     be dismissed before the correct page shows. This is a server-side bug in
-//     login.asp (it puts the national ID into SearchPatient's `Patient` slot,
-//     which expects the PatientNum, and hardcodes PatientID=0). Proven
-//     unfixable from the extension - see docs/decisions.md 2026-09-16 and
-//     2026-09-17 (H1 disproven: declarativeNetRequest cannot see IE-mode
-//     traffic at all, so the request cannot be rewritten in flight).
-//   - full Chameleon shell reload instead of an in-place frame swap (up to 10
-//     seconds in measured traces), which loses whatever the user had open.
-//   - the session-sensitive flow can require another login.
-//   - does NOT cover dept-tab detection or sector lookup; those still require
-//     the BHO.
-const DEFAULT_PATIENT_OPEN_MODE = "sharedSession";
-
-async function getPatientOpenMode() {
-  try {
-    const { patientOpenMode } = await chrome.storage.local.get("patientOpenMode");
-    return ["sharedSession", "bho", "url"].includes(patientOpenMode)
-      ? patientOpenMode
-      : DEFAULT_PATIENT_OPEN_MODE;
-  } catch {
-    return DEFAULT_PATIENT_OPEN_MODE;
-  }
-}
-
-async function setPatientOpenMode(mode) {
-  return wrap(async () => {
-    const value = ["sharedSession", "bho", "url"].includes(mode)
-      ? mode
-      : DEFAULT_PATIENT_OPEN_MODE;
-    await chrome.storage.local.set({ patientOpenMode: value });
-    appendLog({ event: "patientOpenMode.set", mode: value });
-    return { patientOpenMode: value };
-  });
-}
-
 // Rewrites the dotless signal host to the real FQDN. The dotless form is what
 // rules.json rule 1 blocks; the FQDN form is a different requestDomain, so the
 // block does not follow the rewrite.
 function signalUrlToChameleonUrl(sourceUrl) {
   try {
     const u = new URL(sourceUrl);
-    if (u.hostname !== "chsw") return null;
-    u.hostname = "chsw.tasmc.corp";
+    if (u.hostname === "chsw") {
+      u.hostname = "chsw.tasmc.corp";
+    } else if (u.hostname !== "chsw.tasmc.corp") {
+      return null;
+    }
     return u.toString();
   } catch {
     return null;
@@ -637,60 +546,6 @@ function startDeptTabPolling() {
 
 startDeptTabPolling();
 
-// Ensures a Chameleon tab exists (opens one to the login page if not), then
-// unconditionally sends the patient command via native messaging — the BHO
-// invokes OpenPatientRecord immediately if already on the patient list, or
-// queues the command and auto-fires it the next time OpenPatientRecord is
-// found reachable (i.e. right after the user finishes logging in manually).
-async function routePatientOpenViaBho(patientCmd) {
-  const tabs = await chrome.tabs.query({ url: `${CHAMELEON_BASE_URL}/*` });
-  let chameleonTab = tabs[0];
-  if (!chameleonTab) {
-    chameleonTab = await chrome.tabs.create({ url: `${CHAMELEON_BASE_URL}/Chameleon/Account/LogOn` });
-    appendLog({ event: "bho.openedLoginTab", tabId: chameleonTab.id });
-  } else {
-    await chrome.tabs.update(chameleonTab.id, { active: true });
-    await chrome.windows.update(chameleonTab.windowId, { focused: true });
-  }
-
-  try {
-    const response = await sendNativeCommand(patientCmd);
-    appendLog({ event: "bho.command.response", patientCmd, response });
-    return response;
-  } catch (err) {
-    appendLog({ event: "bho.command.failed", patientCmd, error: String(err) });
-    return { ok: false, error: String(err) };
-  }
-}
-
-// H5 fallback path. Navigates the existing Chameleon tab (or a new one) to the
-// signal URL with the host rewritten to the FQDN. Never touches the BHO or the
-// native host, so it still works with bho-poc/ and native-host/ deleted.
-// Expect the spurious "patient not found" alert - see DEFAULT_PATIENT_OPEN_MODE.
-async function routePatientOpenViaUrl(sourceUrl, patientCmd) {
-  const url = signalUrlToChameleonUrl(sourceUrl);
-  if (!url) {
-    appendLog({ event: "patientOpen.url.badSignalUrl", sourceUrl });
-    return { ok: false, error: "signal URL host is not the bare `chsw` form" };
-  }
-
-  const tabs = await chrome.tabs.query({ url: `${CHAMELEON_BASE_URL}/*` });
-  const chameleonTab = tabs[0];
-  try {
-    if (chameleonTab) {
-      await chrome.tabs.update(chameleonTab.id, { url, active: true });
-      await chrome.windows.update(chameleonTab.windowId, { focused: true });
-    } else {
-      await chrome.tabs.create({ url });
-    }
-    appendLog({ event: "patientOpen.url.navigated", url, patientCmd });
-    return { ok: true, mode: "url", url };
-  } catch (err) {
-    appendLog({ event: "patientOpen.url.failed", url, error: String(err) });
-    return { ok: false, error: String(err) };
-  }
-}
-
 function normalizeSector(value) {
   const sector = String(value || "").trim();
   return /^[A-Za-z0-9._-]{1,32}$/.test(sector) ? sector : null;
@@ -756,11 +611,11 @@ async function probeMedOrderSector() {
   });
 }
 
-async function routePatientOpenViaSharedSession(sourceUrl, patientCmd) {
+async function routePatientOpenViaSharedSession(sourceUrl, patient) {
   const primeUrl = signalUrlToChameleonUrl(sourceUrl);
   if (!primeUrl) {
     appendLog({ event: "patientOpen.sharedSession.badSignalUrl", sourceUrl });
-    return { ok: false, error: "signal URL host is not the bare `chsw` form" };
+    return { ok: false, error: "signal URL host is not an approved Chameleon host" };
   }
 
   try {
@@ -789,9 +644,9 @@ async function routePatientOpenViaSharedSession(sourceUrl, patientCmd) {
     const { hospitalId = "101" } = await chrome.storage.local.get("hospitalId");
     const correctedUrl = new URL(`${CHAMELEON_BASE_URL}/Chameleon/Home/Main`);
     correctedUrl.search = new URLSearchParams({
-      Patient: patientCmd.patient,
-      PatientID: patientCmd.patient,
-      idnum: patientCmd.idNum,
+      Patient: patient.patient,
+      PatientID: patient.patient,
+      idnum: patient.idNum,
       Hospital: hospitalId,
       QuickOpen: "1",
       pReloginByUserRecord: "0",
@@ -817,9 +672,9 @@ async function routePatientOpenViaSharedSession(sourceUrl, patientCmd) {
       tabId: chameleonTab.id,
       primeStatus: primeResponse.status,
       correctedUrl: correctedUrl.toString(),
-      patient: patientCmd.patient,
-      medicalRecord: patientCmd.medicalRecord,
-      unit: patientCmd.unit,
+      patient: patient.patient,
+      medicalRecord: patient.medicalRecord,
+      unit: patient.unit,
     });
     return {
       ok: true,
@@ -925,9 +780,9 @@ const handledPopupTabIds = new Set();
 //
 // ...i.e. unbounded create/remove churn until Edge stops responding. It only
 // affected the links whose route target keeps matching its own pattern
-// (מאזן נוזלים / הוראות לתרופות / Cardio / Namer and friends); patient opens
-// were immune because routePatientOpenViaBho never navigates a tab to a
-// matching URL, it only pipes a command to the BHO.
+// (מאזן נוזלים / הוראות לתרופות / Cardio / Namer and friends). Patient opens
+// are also immune because the shared-session route navigates to corrected
+// Home/Main parameters, which do not match the signal pattern.
 //
 // This mirrors what the real Jumper app does: Gecko.cs matches these patterns
 // ONLY inside WebView_NewWindowRequested — a genuine popup request from the
@@ -946,21 +801,15 @@ function markPopupCandidate(tabId) {
 
 async function routeModernSignal(url, context = {}) {
   const { source = "popup", tabId = null, closeTab = false } = context;
-  const patientCmd = matchPatientCommand(url);
-  if (patientCmd) {
+  const patient = matchPatientSignal(url);
+  if (patient) {
     if (typeof tabId === "number") handledPopupTabIds.add(tabId);
-    const patientOpenMode = await getPatientOpenMode();
     appendLog({
       event: "bridge.intercepted",
       tabId,
       source,
       sourceUrl: url,
-      label:
-        patientOpenMode === "sharedSession"
-          ? "OpenPatientRecord(shared session)"
-          : patientOpenMode === "url"
-            ? "OpenPatientRecord(URL fallback)"
-            : "OpenPatientRecord(BHO)"
+      label: "Patient(shared session)"
     });
     if (closeTab && typeof tabId === "number") {
       try {
@@ -969,13 +818,7 @@ async function routeModernSignal(url, context = {}) {
         // tab may already be gone
       }
     }
-    if (patientOpenMode === "sharedSession") {
-      await routePatientOpenViaSharedSession(url, patientCmd);
-    } else if (patientOpenMode === "url") {
-      await routePatientOpenViaUrl(url, patientCmd);
-    } else {
-      await routePatientOpenViaBho(patientCmd);
-    }
+    await routePatientOpenViaSharedSession(url, patient);
     return true;
   }
 
@@ -1060,14 +903,11 @@ async function setHospitalId(hospitalId) {
 
 async function getSettings() {
   return wrap(async () => {
-    const { hospitalId, geckoDisplayMode, patientOpenMode } =
-      await chrome.storage.local.get(["hospitalId", "geckoDisplayMode", "patientOpenMode"]);
+    const { hospitalId, geckoDisplayMode } =
+      await chrome.storage.local.get(["hospitalId", "geckoDisplayMode"]);
     return {
       hospitalId: hospitalId || "101",
       geckoDisplayMode: geckoDisplayMode === "sidePanel" ? "sidePanel" : "tab",
-      patientOpenMode: ["sharedSession", "bho", "url"].includes(patientOpenMode)
-        ? patientOpenMode
-        : DEFAULT_PATIENT_OPEN_MODE,
     };
   });
 }
@@ -1111,9 +951,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       case "setDisplayMode":
         sendResponse(await setDisplayMode(msg.mode));
-        break;
-      case "setPatientOpenMode":
-        sendResponse(await setPatientOpenMode(msg.mode));
         break;
       case "probeMedOrderSector":
         sendResponse(await probeMedOrderSector());

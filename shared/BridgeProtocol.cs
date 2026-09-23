@@ -1,5 +1,3 @@
-using System;
-
 namespace Jumper.Bridge
 {
     // SINGLE SOURCE OF TRUTH for the wire protocol between the native messaging
@@ -36,66 +34,18 @@ namespace Jumper.Bridge
         // which takes the bare name above.
         public const string PipeDisplayPath = @"\\.\pipe\" + PipeName;
 
-        // How long the host waits for a BHO to accept a connection. A miss
-        // means "no Chameleon tab is open", which is a normal state, not an
-        // error - callers should degrade rather than throw.
-        public const int ConnectTimeoutMs = 3000;
-
         // --- Commands (host -> BHO) --------------------------------------
         //
         // One line per command, UTF8, newline-terminated. Compared with
         // OrdinalIgnoreCase on the BHO side.
 
-        public const string FieldSeparator = "|";
-
         // Duplex. Reply: ReplyTrue / ReplyFalse.
         public const string CmdQueryDeptTab = "QUERY_DEPT_TAB";
-
-        // Anything not matching the above is treated as an OpenPatientRecord
-        // argument line - see PatientFieldOrder.
 
         // --- Replies (BHO -> host) ---------------------------------------
 
         public const string ReplyTrue = "1";
         public const string ReplyFalse = "0";
 
-        // --- OpenPatientRecord argument order ----------------------------
-
-        // The order Chameleon's OpenPatientRecord(...) expects its arguments,
-        // reverse-engineered from view-source of the function body. The host
-        // builds the line in this order and the BHO passes the split parts
-        // straight through to the JS call, so the two MUST agree.
-        //
-        // These are the keys the extension sends in its JSON message.
-        public static readonly string[] PatientFieldOrder =
-        {
-            "patient",
-            "unit",
-            "medicalRecord",
-            "recordChar",
-            "recordPart",
-            "unitName",
-            "admissionDate",
-            "endDate",
-            "idNum",
-        };
-
-        // Defaults, positionally aligned with PatientFieldOrder above.
-        // The POC proved even guessed values ("0", "", hospital-as-idNum)
-        // render the full record page correctly.
-        public static readonly string[] PatientFieldDefaults =
-        {
-            "",     // patient
-            "",     // unit
-            "",     // medicalRecord
-            "0",    // recordChar
-            "0",    // recordPart
-            "",     // unitName
-            "",     // admissionDate
-            "",     // endDate
-            "101",  // idNum
-        };
-
-        public const int PatientFieldCount = 9;
     }
 }

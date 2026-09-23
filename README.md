@@ -6,9 +6,9 @@ in this repo:
 
 | Component | Path | Role |
 |---|---|---|
-| Extension | `edge/` | Manifest V3 extension. Intercepts the modern app's `window.open()` signal URLs and routes each one through shared-session HTTP/navigation, a new tab, or a native app launch. Also hosts Gecko in a side panel. |
-| Native messaging host | `native-host/` | `com.jumper.native_host` — a stdio↔named-pipe relay the extension launches via `chrome.runtime.connectNative`. |
-| BHO | `bho-poc/` | `JumperBho.dll`, a Browser Helper Object loaded by Trident into `iexplore.exe`. Drives Chameleon's `folderFrame` JS for features that require in-page scripting; patient opening no longer uses it. |
+| Extension | `edge/` | Manifest V3 extension. Intercepts the modern app's link and `window.open()` signals and routes each one through shared-session HTTP/navigation, a new tab, or a native app launch. Also hosts Gecko in a side panel. |
+| Native messaging host | `native-host/` | `com.jumper.native_host` — queries department state through the BHO and launches Namer. |
+| BHO | `bho-poc/` | `JumperBho.dll`, a Browser Helper Object loaded by Trident into `iexplore.exe`. Reads Chameleon's department-tab state. |
 | Shared | `shared/` | `BridgeProtocol.cs` — the wire protocol linked (not project-referenced) into both C# projects. **Changing it means rebuilding both.** |
 
 ## Documentation
@@ -30,9 +30,8 @@ Two conclusions worth knowing up front, both proven the hard way (see
   `GetUserSector()` data source with an authenticated `GetUserDetails` request
   through the shared session, then opens `MedOrdersFrm.aspx` with the returned
   sector. No BHO/native-host call is made.
-- **The BHO remains for department-tab detection and optional legacy patient
-  mode.** Edge IE mode still exposes no scriptable document to extensions or
-  external automation.
+- **The BHO remains only for department-tab detection.** Edge IE mode still
+  exposes no scriptable document to extensions or external automation.
 - **Signal URLs are stopped inside Gecko.** A document-start content bridge
   intercepts recognized links and `window.open()` calls before a temporary tab
   or IE-mode request exists, eliminating the download-prompt dependency.
@@ -71,12 +70,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Dev\jumper-bridge\install
 ```
 
 Self-elevates once (a single UAC prompt), builds both `bho-poc` and
-`native-host` in Release, then registers both:
+`native-host` in Release, registers both, and installs the shared-cookie site
+list:
 - BHO: `regasm /codebase` (both 32/64-bit .NET) + the `Browser Helper Objects`
   activation key under HKLM (+ Wow6432Node) — the only step that needs admin.
 - Native host: one HKCU key pointing Edge at `native-host/com.jumper.native_host.json`.
+- Enterprise Mode: downloads the current `InternetExplorerIntegrationSiteList`,
+  preserves its sites, adds the three Chameleon `<shared-cookie>` entries,
+  writes `%ProgramData%\JumperBridge\sites-with-shared-cookies.xml`, and points
+  the current user's Edge policy to that local merged copy.
 
 Safe to re-run any time (rebuild, or after the extension ID changes).
+Re-running also refreshes the local list from the original corporate URL saved
+under `HKCU\Software\JumperBridge`.
 
 ## Manual install (equivalent, two steps)
 

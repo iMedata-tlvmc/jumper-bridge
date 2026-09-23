@@ -33,7 +33,7 @@ is Jumper's *composited overlay* — see §7.
 
 ## 2. Architecture — three components
 
-All three now live together in this repo (`jumper-bridge`), under `bho-poc/`,
+All four now live together in this repo (`jumper-bridge`), under `bho-poc/`,
 `native-host/`, `shared/` and `edge/`. See the root `README.md` for install steps.
 
 ```
@@ -53,20 +53,13 @@ All three now live together in this repo (`jumper-bridge`), under `bho-poc/`,
             BHO (in-proc COM) C:\Dev\jumper-bridge\bho-poc
                     │  late-bound COM / IDispatch
                     ▼
-            Chameleon's folderFrame JS (dept detection, legacy patient mode)
+            Chameleon's folderFrame DOM (department-state detection)
 ```
 
-**What the native host does:** `JumperNativeHost.exe` is a thin stdio↔pipe
-relay, nothing more. Edge launches it (length-prefixed JSON on stdin/stdout,
-the standard native-messaging framing) when the extension calls
-`connectNative`; it opens `\\.\pipe\JumperBhoBridge`, forwards the extension's
-command through and returns any response to the extension.
-It also owns `BuildPipeLine()` (assembles the 9-field `OpenPatientRecord` arg
-line from `BridgeProtocol.PatientFieldOrder`/`Defaults`) and `LaunchNamer()`
-(spawns the separate Namer desktop app for the `namer` link kind — the one
-thing it does besides relaying). No business logic, no state between calls,
-no direct DOM/COM access — it exists purely because extensions can't open
-named pipes themselves and a BHO can't be a native-messaging endpoint.
+**What the native host does:** `JumperNativeHost.exe` implements Edge native
+messaging. It queries `QUERY_DEPT_TAB` through `\\.\pipe\JumperBhoBridge` and
+owns `LaunchNamer()`, which starts the separate Namer desktop app. It has no
+patient-opening route and no direct DOM/COM access.
 
 **Why the BHO exists:** `chrome.scripting.executeScript` and `chrome.debugger`
 both fail against IE-mode content (rendered by Trident in a separate process,
@@ -87,9 +80,8 @@ raw localhost socket wouldn't get for free.
 
 **Duplication between them was factored out** into
 `C:\Dev\jumper-bridge\shared\BridgeProtocol.cs`, linked (`<Compile Include=... Link=...>`)
-into both `.csproj`s. It owns the pipe name, connect timeout, command verbs
-(`QUERY_DEPT_TAB`), the `1` / `0` reply vocabulary, and the 9-field `OpenPatientRecord`
-argument order + defaults. Previously these were bare string literals
+into both `.csproj`s. It owns the pipe name, `QUERY_DEPT_TAB` command, and the
+`1` / `0` reply vocabulary. Previously these were bare string literals
 duplicated on both sides, and drift would have been **silent** (a hang or a
 misrouted command, no compile error, no log line). **Changing this file means
 rebuilding both projects.**
@@ -100,15 +92,15 @@ rebuilding both projects.**
 
 | Component | State |
 |---|---|
-| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.9.0**. Pre-navigation Gecko interception plus extension-only patient and Med Orders routes verified. |
-| Native host `C:\Dev\jumper-bridge\native-host` | Handles department polling, legacy patient relay, and Namer launch. |
-| BHO `C:\Dev\jumper-bridge\bho-poc` | Handles department state and optional legacy patient invocation. |
+| Extension `C:\Dev\jumper-bridge\edge` | manifest **0.9.1**. Pre-navigation Gecko interception plus extension-only patient and Med Orders routes verified. |
+| Native host `C:\Dev\jumper-bridge\native-host` | Handles department polling and Namer launch. |
+| BHO `C:\Dev\jumper-bridge\bho-poc` | Handles department-state detection only. |
 | Shared `C:\Dev\jumper-bridge\shared` | `BridgeProtocol.cs`, linked into both C# projects. |
 
 **Verified working (latest patient test 2026-09-22):** patient clicks open the
 correct record through the extension-only shared-session route with no false
 alert or additional login; מחלקות repeatably switches to Gecko; the spurious IE-mode download
-prompt is suppressed; all link types route correctly (§4); the side panel
+prompt does not occur; all link types route correctly (§4); the side panel
 opens from the popup and shows Gecko beside the Chameleon tab, framing
 succeeds with no fallback needed. No known-broken paths.
 
@@ -149,10 +141,7 @@ legacy behaviour: `jumper\Chameleon.cs` / `Gecko.cs`; patterns in `Common.cs` 36
 
 ### 4.1 Patient open is extension-only via Enterprise Mode cookie sharing
 
-`chrome.storage.local` key **`patientOpenMode`**:
-`"sharedSession"` (default) | `"bho"` | `"url"`.
-
-`"sharedSession"` uses Microsoft's supported bidirectional cookie sharing to
+Patient opening always uses Microsoft's supported bidirectional cookie sharing to
 make Chameleon's authenticated session available to the extension:
 
 ```xml
@@ -180,21 +169,8 @@ additional login. Passive BHO evidence showed:
 - Patient B: PatientNum `9001674042`, record `11152014`, unit `831000`,
   admission date `25/07/2023`.
 
-`"url"` is retained only as a degraded diagnostic fallback:
-
-- a spurious `מטופל/ת לא נמצא/ה במערכת` alert on **every** open. `login.asp`
-  puts the national ID into `SearchPatient`'s `Patient` slot (which expects the
-  PatientNum) and hardcodes `PatientID=0`. Server-side vendor bug.
-- full Chameleon shell reload instead of an in-place frame swap; app state is
-  lost. Measured end-to-end time has varied up to ~10 s.
-- the flow is session-sensitive. It worked without re-authentication in the
-  2026-09-17 17:50 trace, but later controlled runs reopened the login page even
-  immediately after a normal login (§11 / `decisions.md` 2026-09-17 18:05).
-- does not cover מחלקות dept-tab detection.
-
-`"bho"` retains the previous in-place `OpenPatientRecord` route. The BHO/native
-host are not used by `"sharedSession"`. They remain in use for department-tab
-detection, Namer launch, and the optional legacy patient route.
+The previous selectable BHO and degraded direct-URL patient modes were removed
+in extension 0.9.1. Patient clicks no longer have a native-host or BHO route.
 
 ### 4.2 Med Orders sector lookup is extension-only
 
@@ -280,7 +256,6 @@ there is no generic arbitrary-script command in the native/BHO protocol.
 | `Frame 'folderFrame' not found among 0 frame(s)` | wrong process owns the pipe (§5.3) |
 | `TargetInvocationException` from `[pipe-owner]`/`[dept-tab]` | wrong COM receiver (§5.1) or dead site (§5.2) |
 | `GetUserSector` returns `''` → `&Sector=` empty | lands on `PermissionDenied.aspx` |
-| Patient click opens the tab but not the patient, then מחלקות opens it | args queued and fired on next list reload — **intended** fallback when already inside a patient record |
 
 ---
 
@@ -440,20 +415,16 @@ is dominated by poll noise — always filter:
 ```powershell
 Get-Content C:\Temp\jumper-bho.log |
   Where-Object { $_ -notmatch "QUERY_DEPT_TAB" -and
-                 $_ -match "\[sites\]|\[dept-tab\] state|\[invoke|\[pipe|failed" } |
+                 $_ -match "\[sites\]|\[dept-tab\] state|\[pipe|failed" } |
   Select-Object -Last 60
 ```
 
-Healthy signatures: `[sites] Registered site; N live site(s)`,
-`[invoke:pipe-immediate] ... returned without throwing`, and
+Healthy signatures: `[sites] Registered site; N live site(s)` and
 `[dept-tab] state changed: ... -> ...`. Normal Gecko clicks should produce no
-bare-host `http://chsw/...` BHO navigation.
+bare-host `http://chsw/...` BHO navigation or patient command.
 
 **Watch the `pid=` prefix** — multiple `iexplore.exe` processes log to the same
 file; a command answered by the wrong pid is §5.3.
-
-No-extension test path: write a pipe-delimited arg line to
-`C:\Temp\jumper-bho-invoke.txt` — the BHO consumes it one-shot.
 
 ---
 
@@ -461,9 +432,9 @@ No-extension test path: write a pipe-delimited arg line to
 
 - `C:\Dev\jumper-bridge\bho-poc\BhoObject.cs` — the BHO.
 - `C:\Dev\jumper-bridge\shared\BridgeProtocol.cs` — the wire protocol (§2). Change → rebuild both.
-- `C:\Dev\jumper-bridge\native-host\Program.cs` — the relay + `LaunchNamer`.
+- `C:\Dev\jumper-bridge\native-host\Program.cs` — department query + `LaunchNamer`.
 - `C:\Dev\jumper-bridge\native-host\com.jumper.native_host.json` — pins the extension ID.
-- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.9.0), `background.js` (routing +
+- `C:\Dev\jumper-bridge\edge\` — `manifest.json` (0.9.1), `background.js` (routing +
   dept-tab poll + side panel), `page-window-open-bridge.js` /
   `content-bridge.js` (pre-navigation interception), `rules.json` (fallback
   signal-URL block + header strip),
@@ -485,8 +456,11 @@ No-extension test path: write a pipe-delimited arg line to
    that still require IE-mode scripting have a heavier deployment footprint;
    patient opening itself no longer has that dependency.
 3. Roll the three proven `<shared-cookie>` entries into the centrally hosted
-   `https://iemode/sites.xml`; the current machine is testing a reversible local
-   override at `C:\Temp\jumper-sites-cookie-share.xml`.
+   `https://iemode/sites.xml`. Until then, `install-jumper-bridge.ps1` downloads
+   the configured corporate list, merges the entries into
+   `%ProgramData%\JumperBridge\sites-with-shared-cookies.xml`, and points the
+   current user's policy to that local copy. Re-run it to import central list
+   updates.
 4. `NewRecord` still does a plain navigation; real Jumper also switches the
    unit in the `Heading` frame and waits 500 ms — not replicated.
 5. If ever needed, revisit merging the BHO and native host into one

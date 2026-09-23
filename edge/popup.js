@@ -69,12 +69,6 @@ document.getElementById("displayMode").addEventListener("change", async (e) => {
   log(`setDisplayMode("${mode}")`, res);
 });
 
-document.getElementById("patientOpenMode").addEventListener("change", async (e) => {
-  const mode = e.target.value;
-  const res = await send({ type: "setPatientOpenMode", mode });
-  log(`setPatientOpenMode("${mode}")`, res);
-});
-
 document.getElementById("btnProbeMedOrderSector").addEventListener("click", async () => {
   const res = await send({ type: "probeMedOrderSector" });
   log("probeMedOrderSector", res);
@@ -107,9 +101,6 @@ document.getElementById("btnOpenSidePanel").addEventListener("click", async () =
     }
     if (res.result.geckoDisplayMode) {
       document.getElementById("displayMode").value = res.result.geckoDisplayMode;
-    }
-    if (res.result.patientOpenMode) {
-      document.getElementById("patientOpenMode").value = res.result.patientOpenMode;
     }
   }
 })();

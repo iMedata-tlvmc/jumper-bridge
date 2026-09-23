@@ -13,11 +13,8 @@ using Jumper.Bridge;
 namespace JumperNativeHost
 {
     // Minimal native messaging host: implements Chrome/Edge's stdio protocol
-    // (4-byte little-endian length prefix + UTF8 JSON, both directions) and
-    // relays each incoming "open patient" request to the BHO's named pipe
-    // ("\\.\pipe\JumperBhoBridge") as a single pipe-delimited line matching
-    // OpenPatientRecord's real JS parameter order:
-    //   Patient|Unit|Medical_Record|Record_Char|Record_Part|Unit_Name|Admission_Date|End_Date|Id_Num
+    // (4-byte little-endian length prefix + UTF8 JSON, both directions),
+    // queries the BHO's department-tab state, and launches Namer.
     //
     // Edge launches this process on demand when the extension calls
     // chrome.runtime.connectNative(hostName), and keeps it alive for as long
@@ -73,7 +70,7 @@ namespace JumperNativeHost
                     try
                     {
                         var msg = serializer.Deserialize<Dictionary<string, object>>(json);
-                        string type = msg != null && msg.TryGetValue("type", out var t) && t != null ? t.ToString() : "openPatient";
+                        string type = msg != null && msg.TryGetValue("type", out var t) && t != null ? t.ToString() : null;
 
                         if (string.Equals(type, "queryDeptTab", StringComparison.OrdinalIgnoreCase))
                         {
@@ -87,13 +84,6 @@ namespace JumperNativeHost
                             LaunchNamer(patnum);
                             response = new Dictionary<string, object> { { "ok", true } };
                             Log($"LAUNCH_NAMER -> patnum={patnum}");
-                        }
-                        else if (string.Equals(type, "openPatient", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string line = BuildPipeLine(msg);
-                            SendToBhoPipe(line);
-                            response = new Dictionary<string, object> { { "ok", true } };
-                            Log($"Relayed to BHO pipe successfully: {line}");
                         }
                         else
                         {
@@ -111,22 +101,6 @@ namespace JumperNativeHost
             }
 
             return 0;
-        }
-
-        // OpenPatientRecord's args, in the order the JS function expects them.
-        // Both the order and the defaults live in BridgeProtocol so the BHO
-        // side cannot drift from this - see that file for why.
-        private static string BuildPipeLine(Dictionary<string, object> msg)
-        {
-            var fields = new string[BridgeProtocol.PatientFieldCount];
-            for (int i = 0; i < BridgeProtocol.PatientFieldCount; i++)
-            {
-                string key = BridgeProtocol.PatientFieldOrder[i];
-                fields[i] = msg != null && msg.TryGetValue(key, out var v) && v != null
-                    ? v.ToString()
-                    : BridgeProtocol.PatientFieldDefaults[i];
-            }
-            return string.Join(BridgeProtocol.FieldSeparator, fields);
         }
 
         // --- Namer: launching the native SAP app ---
@@ -182,18 +156,6 @@ namespace JumperNativeHost
             catch (Exception ex)
             {
                 Log($"EnsureSapLogonRunning failed (continuing anyway): {ex.Message}");
-            }
-        }
-
-        private static void SendToBhoPipe(string line)
-        {
-            using (var client = new NamedPipeClientStream(".", BridgeProtocol.PipeName, PipeDirection.Out))
-            {
-                client.Connect(BridgeProtocol.ConnectTimeoutMs); // throws TimeoutException if no Chameleon tab/BHO is listening yet
-                using (var writer = new StreamWriter(client, Encoding.UTF8) { AutoFlush = true })
-                {
-                    writer.WriteLine(line);
-                }
             }
         }
 

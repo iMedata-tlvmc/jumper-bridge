@@ -1121,3 +1121,28 @@ Default Gecko routing no longer depends on the BHO for download suppression.
 The popup-tab listener and DNR rule remain as defensive fallbacks if a page is
 not reloaded after extension installation or an unknown invocation mechanism
 is introduced.
+
+## 2026-09-22 — Removed legacy patient modes
+
+Extension 0.9.1 makes shared-session patient opening the only patient route.
+The selectable `patientOpenMode`, BHO patient relay, degraded direct-URL mode,
+native-host `openPatient` message, shared nine-field patient protocol, BHO
+`OpenPatientRecord` invocation/probing, and scoped download-prompt suppression
+were removed.
+
+The BHO now only reads department-tab state and answers `QUERY_DEPT_TAB`. The
+native host now only queries that state and launches Namer.
+
+## 2026-09-23 — Installer manages the shared-cookie site list
+
+`install-jumper-bridge.ps1` now reads the current
+`InternetExplorerIntegrationSiteList` policy, saves the original source under
+`HKCU\Software\JumperBridge`, downloads that list, replaces/adds the three
+Chameleon `<shared-cookie>` entries, increments the list version, and writes:
+
+    %ProgramData%\JumperBridge\sites-with-shared-cookies.xml
+
+It then points the current user's Edge policy to the local `file:///` URI.
+Re-running refreshes the merged copy from the saved corporate source. The
+preferred production state remains adding the entries to the centrally hosted
+list so updates require no per-machine refresh.

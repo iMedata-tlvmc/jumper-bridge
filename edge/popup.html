@@ -42,7 +42,7 @@
   <div class="row">
     <input id="hospitalId" type="text" placeholder="Hospital ID" value="101" style="max-width:80px" />
     <button id="btnSaveHospital">Save Hospital ID</button>
-    <span class="hint">Used to build OpenPatientRecord's deep link (not present in the signal URL)</span>
+    <span class="hint">Used to build the corrected patient URL (not present in the signal URL)</span>
   </div>
   <div class="row">
     <select id="displayMode" style="max-width:220px">
@@ -56,22 +56,6 @@
   </div>
 
   <div class="row">
-    <select id="patientOpenMode" style="max-width:220px">
-      <option value="sharedSession">Patient open via shared session (extension-only)</option>
-      <option value="bho">Patient open via BHO</option>
-      <option value="url">Patient open via URL (degraded)</option>
-    </select>
-    <span class="hint">Shared-session mode is the default and opens the correct patient
-      without the false alert or another login. It requires Edge Enterprise Mode
-      cookie-sharing rules for .CHAMELEONAUTH and ASP.NET_SessionId. Plain URL mode
-      is a degraded fallback: a spurious
-      "מטופל/ת לא נמצא/ה במערכת" alert fires on <b>every</b> open and must be
-      dismissed, the whole Chameleon shell reloads (up to ~10s in measured traces, losing app state),
-      the session-sensitive flow may require another login, and it does not cover
-      מחלקות detection. The alert is a server-side login.asp bug that cannot be
-      fixed from the extension — see docs/decisions.md.</span>
-  </div>
-  <div class="row">
     <button id="btnProbeMedOrderSector">Probe sector</button>
     <span class="hint">Checks the extension-only authenticated Med Orders sector lookup.
       It does not read or store cookie values.</span>
@@ -80,7 +64,7 @@
   <h3>3. Simulate modern app window.open()</h3>
   <div class="row">
     <select id="simSelect" style="flex:1">
-      <option value="patient">OpenPatientRecord (real deep link, reverse-engineered)</option>
+      <option value="patient">Patient open (shared session)</option>
       <option value="lab">Lab</option>
       <option value="newRecord">NewRecord</option>
       <option value="fluidBalance">FluidBalance</option>
