@@ -16,9 +16,9 @@ in this repo:
 | Doc | What's in it |
 |---|---|
 | [`docs/handoff.md`](docs/handoff.md) | Full architecture, how each link type is routed, known limitations. **Start here.** |
-| [`docs/decisions.md`](docs/decisions.md) | Chronological engineering log — root-cause analyses, design decisions, and dead ends. Read before re-attempting anything. |
+| [`docs/decisions.md`](docs/decisions.md) | Current design decisions and the maintenance constraints behind them. |
 
-Two conclusions worth knowing up front, both proven the hard way (see
+Key conclusions worth knowing up front (see
 `docs/decisions.md`):
 
 - **Patient opening is extension-only.** Edge's supported Enterprise Mode

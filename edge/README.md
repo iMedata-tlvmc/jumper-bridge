@@ -78,8 +78,7 @@ remain as defensive fallbacks.
 | `navigate` | navigates the existing Chameleon tab — `NewRecord` |
 
 Patient opening always uses the extension-only shared-session route.
-Med Orders always uses the extension-only shared-session sector lookup; the old
-native `querySector` route has been removed.
+Med Orders always uses the extension-only shared-session sector lookup.
 
 Most links are `newTab` rather than modals on purpose: `showModalDialog` works, but the
 dialog is created **inside the Chameleon tab**, which isn't focused when the click came
