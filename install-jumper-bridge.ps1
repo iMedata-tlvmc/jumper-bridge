@@ -1,47 +1,97 @@
 <#
 .SYNOPSIS
-  One-shot installer for the Jumper Edge-extension bridge POC: builds and
-  registers BOTH the BHO (jumper-bho-poc) and the native messaging host
-  (jumper-native-host) in a single run, with a single elevation prompt.
+  Installs the Jumper Edge-extension bridge dependencies.
 
 .DESCRIPTION
-  This does NOT merge the two projects into one binary - that's still
-  architecturally blocked (the BHO must be an in-proc COM DLL loaded by
-  Trident via InprocServer32; the native host must be a standalone EXE
-  launched by Edge via connectNative - two different OS activation models).
-  What this DOES do is remove the "two separate manual scripts, one of which
-  needs admin" friction:
-
-   1. Self-elevates once (BHO registration needs HKLM; native host registration
-      only needs HKCU, but running both under the same elevated session avoids
-      a second UAC prompt).
-   2. Builds both projects in Release (dotnet build).
-   3. Runs the existing register-bho.ps1 (regasm both bitness + BHO key,
-      both registry views).
-   4. Runs the existing register-native-host.ps1 (HKCU manifest pointer).
-   5. Downloads the configured Enterprise Mode Site List, adds the three
+   1. Builds the Namer native messaging host in Release.
+   2. Registers the native host for the current user.
+   3. Downloads the configured Enterprise Mode Site List, adds the three
       Chameleon shared-session cookies, writes a local merged copy, and points
       the current user's Edge policy to it.
-   6. Prints a single combined summary instead of separate ones.
 
-  Safe to re-run any time (e.g. after a rebuild, or after changing the
-  extension ID in com.jumper.native_host.json).
+  Administrator rights are required only once when upgrading a machine that
+  still has the retired Jumper BHO registered. New installations and later
+  reruns do not require elevation.
 
 .EXAMPLE
-  powershell -File C:\Dev\install-jumper-bridge.ps1
-  (will self-elevate; just accept the UAC prompt once)
+  powershell -File C:\Dev\jumper-bridge\install-jumper-bridge.ps1
 #>
 
 $ErrorActionPreference = "Stop"
 
-$bhoDir = "C:\Dev\jumper-bridge\bho-poc"
 $nativeHostDir = "C:\Dev\jumper-bridge\native-host"
+$nativeHostExe = Join-Path $nativeHostDir "bin\Release\net472\JumperNativeHost.exe"
+$nativeHostRegistryPath = "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.jumper.native_host"
 $edgePolicyPath = "HKCU:\Software\Policies\Microsoft\Edge"
 $jumperPolicyPath = "HKCU:\Software\JumperBridge"
 $siteListPolicyName = "InternetExplorerIntegrationSiteList"
 $siteListSourceValueName = "EnterpriseModeSiteListSource"
-$mergedSiteListDir = Join-Path $env:ProgramData "JumperBridge"
+$mergedSiteListDir = Join-Path $env:LOCALAPPDATA "JumperBridge"
 $mergedSiteListPath = Join-Path $mergedSiteListDir "sites-with-shared-cookies.xml"
+$legacyMergedSiteListPath = Join-Path $env:ProgramData "JumperBridge\sites-with-shared-cookies.xml"
+$legacyBhoClsid = "{6B1D4E2A-7F3C-4A9B-9E5D-2C8F1A3B6D71}"
+$legacyBhoPaths = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects\$legacyBhoClsid",
+    "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Explorer\Browser Helper Objects\$legacyBhoClsid",
+    "HKLM:\SOFTWARE\Classes\CLSID\$legacyBhoClsid",
+    "HKLM:\SOFTWARE\Wow6432Node\Classes\CLSID\$legacyBhoClsid"
+)
+
+function Test-IsAdministrator {
+    return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+}
+
+function Remove-LegacyBhoRegistration {
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+
+    $existingPaths = @($Paths | Where-Object { Test-Path $_ })
+    if ($existingPaths.Count -eq 0) {
+        return
+    }
+
+    if (-not (Test-IsAdministrator)) {
+        Write-Host "The retired Jumper BHO is still registered. Requesting elevation for one-time removal..."
+        $elevated = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", "`"$PSCommandPath`""
+        )
+        exit $elevated.ExitCode
+    }
+
+    Write-Host "Removing retired Jumper BHO registration..." -ForegroundColor Cyan
+    foreach ($path in $existingPaths) {
+        Remove-Item -Path $path -Recurse -Force
+        Write-Host "Removed: $path"
+    }
+}
+
+function Stop-RegisteredNativeHost {
+    param(
+        [Parameter(Mandatory = $true)][string]$RegistryPath,
+        [Parameter(Mandatory = $true)][string]$ExecutablePath
+    )
+
+    Remove-Item -Path $RegistryPath -Recurse -Force -ErrorAction SilentlyContinue
+
+    $normalizedPath = [IO.Path]::GetFullPath($ExecutablePath)
+    $hostProcesses = Get-CimInstance Win32_Process -Filter "Name='JumperNativeHost.exe'" |
+        Where-Object {
+            $_.ExecutablePath -and
+            [string]::Equals(
+                [IO.Path]::GetFullPath($_.ExecutablePath),
+                $normalizedPath,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        }
+
+    foreach ($process in $hostProcesses) {
+        Stop-Process -Id $process.ProcessId -Force
+        Write-Host "Stopped previous native host process: $($process.ProcessId)"
+    }
+}
 
 function Get-SiteListXml {
     param([Parameter(Mandatory = $true)][string]$Source)
@@ -69,7 +119,8 @@ function Install-SharedCookieSiteList {
         [Parameter(Mandatory = $true)][string]$SiteListPolicyName,
         [Parameter(Mandatory = $true)][string]$SiteListSourceValueName,
         [Parameter(Mandatory = $true)][string]$MergedSiteListDir,
-        [Parameter(Mandatory = $true)][string]$MergedSiteListPath
+        [Parameter(Mandatory = $true)][string]$MergedSiteListPath,
+        [Parameter(Mandatory = $true)][string]$LegacyMergedSiteListPath
     )
 
     if (-not (Test-Path $EdgePolicyPath)) {
@@ -92,8 +143,11 @@ function Install-SharedCookieSiteList {
         $null
     }
     $mergedSiteListUri = ([Uri]$MergedSiteListPath).AbsoluteUri
+    $legacyMergedSiteListUri = ([Uri]$LegacyMergedSiteListPath).AbsoluteUri
+    $currentPolicyIsManaged = $currentPolicy -eq $mergedSiteListUri -or
+        $currentPolicy -eq $legacyMergedSiteListUri
 
-    if ($currentPolicy -and $currentPolicy -ne $mergedSiteListUri) {
+    if ($currentPolicy -and -not $currentPolicyIsManaged) {
         $source = $currentPolicy
         Set-ItemProperty -Path $JumperPolicyPath -Name $SiteListSourceValueName -Value $source
     } elseif ($savedSource) {
@@ -172,29 +226,12 @@ function Install-SharedCookieSiteList {
     Write-Host "Edge policy: $SiteListPolicyName -> $mergedSiteListUri"
 }
 
-# --- Self-elevate if not already running as Administrator ---------------
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "Not elevated - relaunching this script as Administrator (one UAC prompt covers both installs)..."
-    $psi = @{
-        FilePath     = "powershell.exe"
-        ArgumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
-        Verb         = "RunAs"
-    }
-    Start-Process @psi
-    exit
-}
+Remove-LegacyBhoRegistration -Paths $legacyBhoPaths
+Stop-RegisteredNativeHost `
+    -RegistryPath $nativeHostRegistryPath `
+    -ExecutablePath $nativeHostExe
 
-Write-Host "=== 1/5: Building JumperBho (BHO) ===" -ForegroundColor Cyan
-Push-Location $bhoDir
-try {
-    dotnet build -c Release
-    if ($LASTEXITCODE -ne 0) { throw "JumperBho build failed (exit $LASTEXITCODE)" }
-} finally {
-    Pop-Location
-}
-
-Write-Host "`n=== 2/5: Building JumperNativeHost ===" -ForegroundColor Cyan
+Write-Host "=== 1/3: Building JumperNativeHost ===" -ForegroundColor Cyan
 Push-Location $nativeHostDir
 try {
     dotnet build -c Release
@@ -203,26 +240,23 @@ try {
     Pop-Location
 }
 
-Write-Host "`n=== 3/5: Registering the BHO (regasm + BHO key, HKLM) ===" -ForegroundColor Cyan
-& "$bhoDir\register-bho.ps1"
-
-Write-Host "`n=== 4/5: Registering the native messaging host (HKCU) ===" -ForegroundColor Cyan
+Write-Host "`n=== 2/3: Registering the native messaging host (HKCU) ===" -ForegroundColor Cyan
 & "$nativeHostDir\register-native-host.ps1"
 
-Write-Host "`n=== 5/5: Installing Enterprise Mode shared-cookie policy (HKCU) ===" -ForegroundColor Cyan
+Write-Host "`n=== 3/3: Installing Enterprise Mode shared-cookie policy (HKCU) ===" -ForegroundColor Cyan
 Install-SharedCookieSiteList `
     -EdgePolicyPath $edgePolicyPath `
     -JumperPolicyPath $jumperPolicyPath `
     -SiteListPolicyName $siteListPolicyName `
     -SiteListSourceValueName $siteListSourceValueName `
     -MergedSiteListDir $mergedSiteListDir `
-    -MergedSiteListPath $mergedSiteListPath
+    -MergedSiteListPath $mergedSiteListPath `
+    -LegacyMergedSiteListPath $legacyMergedSiteListPath
 
 Write-Host ""
-Write-Host "=== Done. Components and shared-cookie policy installed. ===" -ForegroundColor Green
+Write-Host "=== Done. Native host and shared-cookie policy installed. ===" -ForegroundColor Green
 Write-Host "Next steps:"
-Write-Host "  1. Fully restart Edge (BHO and Enterprise Mode list changes require a fresh browser process)."
+Write-Host "  1. Fully restart Edge so the Enterprise Mode list is reloaded."
 Write-Host "  2. Load the extension (edge://extensions -> Developer mode -> Load unpacked -> C:\Dev\jumper-bridge\edge), if not already loaded."
 Write-Host "  3. Log out of Chameleon completely, then log back in so fresh session cookies are shared with Chromium."
-Write-Host "  4. Open a Chameleon IE-mode tab and confirm C:\Temp\jumper-bho.log is growing."
-Write-Host "  5. Confirm C:\Temp\jumper-native-host.log is growing (the extension polls it every ~1.5s)."
+Write-Host "  4. Use Gecko's Namer button once and confirm C:\Temp\jumper-native-host.log records LAUNCH_NAMER."

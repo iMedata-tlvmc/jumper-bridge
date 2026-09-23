@@ -2,19 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Pipes;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
-using Jumper.Bridge;
 
 namespace JumperNativeHost
 {
     // Minimal native messaging host: implements Chrome/Edge's stdio protocol
-    // (4-byte little-endian length prefix + UTF8 JSON, both directions),
-    // queries the BHO's department-tab state, and launches Namer.
+    // (4-byte little-endian length prefix + UTF8 JSON, both directions) and
+    // launches Namer.
     //
     // Edge launches this process on demand when the extension calls
     // chrome.runtime.connectNative(hostName), and keeps it alive for as long
@@ -72,13 +70,7 @@ namespace JumperNativeHost
                         var msg = serializer.Deserialize<Dictionary<string, object>>(json);
                         string type = msg != null && msg.TryGetValue("type", out var t) && t != null ? t.ToString() : null;
 
-                        if (string.Equals(type, "queryDeptTab", StringComparison.OrdinalIgnoreCase))
-                        {
-                            bool active = QueryDeptTabState();
-                            response = new Dictionary<string, object> { { "ok", true }, { "active", active } };
-                            Log($"QUERY_DEPT_TAB -> active={active}");
-                        }
-                        else if (string.Equals(type, "launchNamer", StringComparison.OrdinalIgnoreCase))
+                        if (string.Equals(type, "launchNamer", StringComparison.OrdinalIgnoreCase))
                         {
                             string patnum = msg.TryGetValue("patnum", out var p) && p != null ? p.ToString() : null;
                             LaunchNamer(patnum);
@@ -92,7 +84,7 @@ namespace JumperNativeHost
                     }
                     catch (Exception ex)
                     {
-                        Log($"Failed to relay: {ex}");
+                        Log($"Command failed: {ex}");
                         response = new Dictionary<string, object> { { "ok", false }, { "error", ex.Message } };
                     }
 
@@ -156,40 +148,6 @@ namespace JumperNativeHost
             catch (Exception ex)
             {
                 Log($"EnsureSapLogonRunning failed (continuing anyway): {ex.Message}");
-            }
-        }
-
-        // Sends "QUERY_DEPT_TAB" over a duplex connection and reads the
-        // single "1"/"0" response line the BHO's pipe server writes back
-        // (see BhoObject.cs PipeServerLoop). Returns false (not active) if no
-        // Chameleon tab/BHO is currently listening, rather than throwing -
-        // this is a routine, expected state (e.g. before Chameleon is opened).
-        private static bool QueryDeptTabState()
-        {
-            using (var client = new NamedPipeClientStream(".", BridgeProtocol.PipeName, PipeDirection.InOut))
-            {
-                try
-                {
-                    client.Connect(1500);
-                }
-                catch (TimeoutException)
-                {
-                    return false;
-                }
-
-                // NOTE: writer and reader both wrap the SAME underlying
-                // `client` stream, and both StreamWriter/StreamReader close
-                // their underlying stream on Dispose by default - nesting
-                // them in separate `using` blocks caused a double-dispose
-                // (ObjectDisposedException: "Cannot access a closed pipe")
-                // once the first one closed `client` out from under the
-                // second. Don't wrap them in `using` here; the outer
-                // `using (client)` above already closes everything once.
-                var writer = new StreamWriter(client, Encoding.UTF8) { AutoFlush = true };
-                var reader = new StreamReader(client);
-                writer.WriteLine(BridgeProtocol.CmdQueryDeptTab);
-                string response = reader.ReadLine();
-                return response != null && response.Trim() == "1";
             }
         }
 

@@ -63,12 +63,6 @@ document.getElementById("btnSaveHospital").addEventListener("click", async () =>
   log(`setHospitalId("${hospitalId}")`, res);
 });
 
-document.getElementById("displayMode").addEventListener("change", async (e) => {
-  const mode = e.target.value;
-  const res = await send({ type: "setDisplayMode", mode });
-  log(`setDisplayMode("${mode}")`, res);
-});
-
 document.getElementById("btnProbeMedOrderSector").addEventListener("click", async () => {
   const res = await send({ type: "probeMedOrderSector" });
   log("probeMedOrderSector", res);
@@ -85,9 +79,6 @@ document.getElementById("btnOpenSidePanel").addEventListener("click", async () =
     await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
     await chrome.sidePanel.open({ windowId: win.id });
     log("sidePanel.open()", { ok: true, windowId: win.id });
-    // Opening it implies the user wants it, so make it the active mode too.
-    await send({ type: "setDisplayMode", mode: "sidePanel" });
-    document.getElementById("displayMode").value = "sidePanel";
   } catch (err) {
     log("sidePanel.open() FAILED", { ok: false, error: String(err) });
   }
@@ -98,9 +89,6 @@ document.getElementById("btnOpenSidePanel").addEventListener("click", async () =
   if (res && res.ok && res.result) {
     if (res.result.hospitalId) {
       document.getElementById("hospitalId").value = res.result.hospitalId;
-    }
-    if (res.result.geckoDisplayMode) {
-      document.getElementById("displayMode").value = res.result.geckoDisplayMode;
     }
   }
 })();

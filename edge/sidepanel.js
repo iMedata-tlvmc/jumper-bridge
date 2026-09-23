@@ -3,12 +3,9 @@
 // WHY AN IFRAME: chrome.sidePanel can only point at an extension-relative
 // path, so a remote URL cannot be the panel itself; it has to be framed.
 //
-// WHY THIS WORKS AT ALL: an earlier attempt injected the modern app as an
-// iframe into Chameleon's OWN document (BHO SetGeckoOverlayVisible) and it
-// rendered blank - anything inside an IE-mode page is drawn by Trident, not
-// Chromium. The side panel is browser UI rather than page content, so it is
-// rendered by Chromium even while the tab beside it is in IE mode. That is
-// what makes side-by-side possible without a native WebView2 control.
+// WHY THIS WORKS AT ALL: an iframe inside an IE-mode page is drawn by Trident
+// and cannot host this Chromium application. The side panel is browser UI, so
+// it remains Chromium-rendered beside the IE-mode tab.
 
 const DEFAULT_MODERN_APP_URL = "https://inextdata.tasmc.corp/consultationsReportJumper";
 

@@ -35,7 +35,7 @@
   <div class="row">
     <button id="btnRefreshLog">Refresh log</button>
     <button id="btnClearLog">Clear log</button>
-    <span class="hint">bridge.* / deptTab.* / sidePanel.* events + popup interception, newest last</span>
+    <span class="hint">bridge.* / sidePanel.* events + popup interception, newest last</span>
   </div>
 
   <h3>2. Settings</h3>
@@ -45,14 +45,9 @@
     <span class="hint">Used to build the corrected patient URL (not present in the signal URL)</span>
   </div>
   <div class="row">
-    <select id="displayMode" style="max-width:220px">
-      <option value="tab">Gecko in a tab (default)</option>
-      <option value="sidePanel">Gecko in the side panel</option>
-    </select>
     <button id="btnOpenSidePanel">Open side panel now</button>
     <span class="hint">Side panel shows Gecko beside the IE-mode Chameleon tab. Chromium can only open it
-      from a real click, so open it once here — after that the מחלקות transition keeps it in sync. If it is
-      closed when מחלקות fires, we fall back to focusing the Gecko tab.</span>
+      from a real click, so open it from this button.</span>
   </div>
 
   <div class="row">

@@ -15,13 +15,4 @@
          pulling in a NuGet JSON package for this small POC bridge process. -->
     <Reference Include="System.Web.Extensions" />
   </ItemGroup>
-
-  <ItemGroup>
-    <!-- Wire protocol shared with JumperBho. Linked, not project-referenced:
-         the two assemblies are deployed and registered completely
-         independently, so neither should depend on the other's binary.
-         CHANGING IT MEANS REBUILDING BOTH PROJECTS. -->
-    <Compile Include="..\shared\BridgeProtocol.cs" Link="BridgeProtocol.cs" />
-  </ItemGroup>
-
 </Project>

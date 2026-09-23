@@ -1,98 +1,60 @@
 # Jumper Bridge decisions
 
-This file records only decisions that still constrain the current
-implementation. Obsolete experiments and completed task plans have been removed.
+This file records decisions that constrain the current implementation.
 
-## Use document-start interception
+## Intercept signals at document start
 
-Gecko signals are intercepted before navigation:
+Main-world `window.open()` wrapping and capture-phase anchor handling stop
+recognized Gecko signals before navigation. Sender-origin validation remains in
+the service worker. Tab-level interception and DNR are defensive fallbacks.
 
-- main-world `window.open()` wrapper;
-- capture-phase anchor listeners;
-- sender-origin validation in the service worker.
+## Use Enterprise Mode shared cookies
 
-This avoids temporary tabs, IE-mode signal requests, and download prompts.
-Tab-level interception and DNR remain defensive fallbacks only.
+Patient opening and Med Orders use Chameleon's authenticated session from
+Chromium. The installer merges the required bidirectional shared-cookie rules
+into the configured site list.
 
-## Use shared-session patient navigation
+Cookie sharing is not retroactive. After policy installation, restart Edge and
+perform a complete Chameleon logout/login.
 
-Patient opening uses Enterprise Mode bidirectional cookie sharing. The
-extension primes QuickOpen state with the original signal URL and navigates
-Chameleon to corrected `Home/Main` parameters.
+## Keep patient and Med Orders extension-only
 
-This is the only patient route. Native/BHO patient invocation and degraded
-direct-URL modes were removed.
+Patient opening primes QuickOpen and navigates to corrected `Home/Main`
+parameters. Med Orders reproduces `GetUserSector()` with an authenticated
+`GetUserDetails` request.
 
-## Require a fresh login after cookie-policy installation
+There is no native fallback for either route.
 
-Edge can load the shared-cookie rules while an existing Chameleon session
-remains authenticated in IE mode. That old session does not retroactively copy
-its cookies into Chromium.
+## Remove the BHO and automatic department switching
 
-After changing the site list, users must:
+Automatic Chameleon **מחלקות → Gecko** switching is no longer required.
+Therefore the BHO, COM registration, named pipe, shared protocol, department
+polling, and related display-mode setting were removed.
 
-1. Fully restart Edge.
-2. Log out of Chameleon.
-3. Log back in.
+Manual side-panel buttons still navigate to Gecko sections.
 
-The extension popup's **Probe sector** is the supported shared-session check.
+## Keep the native host only for Namer
 
-## Reproduce GetUserSector through HTTP
+Namer is a hospital native application rather than a web route. A small native
+messaging host validates the patient number, ensures SAP Logon is running, and
+launches the fixed `NamerButton.exe` path.
 
-Med Orders obtains the sector through authenticated
-`GetUserDetails`/`DataReaderXML.asp`, matching Chameleon's own data source.
-There is no native or BHO fallback.
+The host is started on demand and performs no polling.
 
-## Keep the BHO only for department-state detection
+## Prefer tabs over hidden IE-mode dialogs
 
-Extensions cannot inspect IE-mode DOM content. The BHO therefore remains to
-read the patient-list and heading-tab elements and expose a Boolean department
-state.
+Chameleon modal dialogs created inside an unfocused IE-mode tab are not visible
+until the user switches tabs. Supported browser-page routes therefore use
+normal tabs, accepting the Fluid Balance close-tab prompt.
 
-It does not navigate, invoke page functions, execute scripts, open patients, or
-handle downloads.
+## Keep the side panel manual and optional
 
-This dependency is optional at deployment time. If automatic
-**מחלקות → Gecko** switching is not required, remove the BHO/COM installation,
-department polling, named pipe, and shared protocol.
+The side panel is Chromium browser UI and can render Gecko beside an IE-mode
+tab. `chrome.sidePanel.open()` requires a user gesture, so the popup opens it
+directly. No Chameleon state automatically opens or focuses it.
 
-## Keep the native host separate
+## Use a local merged site list for the POC
 
-The BHO must be an in-process COM DLL loaded by Trident. Edge native messaging
-requires a standalone executable. They cannot be one binary under the current
-activation models.
-
-The native host has two responsibilities:
-
-- relay `QUERY_DEPT_TAB` to the BHO through the named pipe;
-- launch Namer after validating the patient number.
-
-Without department switching it is needed only for Namer. Without Namer it is
-not needed at all.
-
-## Start the pipe only in the Chameleon frameset process
-
-IE mode can create several `iexplore.exe` processes. Starting the same named
-pipe in popup processes creates an ownership race. The BHO starts its pipe only
-when the top document exposes `folderFrame`.
-
-## Prefer tabs over Chameleon modal dialogs
-
-Modal dialogs created inside the unfocused IE-mode Chameleon tab are invisible
-until the user switches tabs. Current browser-page routes therefore use normal
-tabs, accepting that Fluid Balance may display an IE close-tab prompt.
-
-## Use a local merged Enterprise Mode list for the POC
-
-The installer preserves the centrally configured list, adds the required
-shared-cookie entries, assigns a monotonic version, and writes a local copy
-under `%ProgramData%\JumperBridge`.
-
-Production should add the same entries to the centrally hosted list so updates
-do not require rerunning the installer on each computer.
-
-## Keep the side panel optional
-
-The side panel can render Chromium content beside an IE-mode tab. Opening it
-requires a user gesture, so the popup opens it initially; department transitions
-fall back to focusing a normal Gecko tab if the panel is unavailable.
+The installer preserves the centrally configured list, adds the shared-cookie
+entries, assigns a monotonic version, and writes a current-user local copy.
+Production should add the entries to the centrally hosted list.

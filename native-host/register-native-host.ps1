@@ -1,6 +1,5 @@
 # Registers the Jumper native messaging host manifest with Edge, under the
-# CURRENT USER hive (HKCU) - no admin required, unlike the BHO's own COM/BHO
-# registration which needs HKLM.
+# CURRENT USER hive (HKCU) - no admin required.
 #
 # Run this once (and again if the extension ID or manifest path changes).
 

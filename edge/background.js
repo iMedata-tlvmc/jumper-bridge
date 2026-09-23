@@ -175,18 +175,9 @@ async function buildChameleonTarget(sourceUrl) {
     // (sometimes after the tab is already gone, at which point the dialog is
     // inert - harmless, just dismiss it).
     //
-    // Tried (2026-09-10) switching to window.open() from folderFrame via the
-    // BHO instead, which does give the popup a real script opener and does
-    // suppress that prompt - but Trident then refocuses that opener (the
-    // Chameleon tab) when the popup closes, and 3 separate attempts at
-    // overriding that from the extension (opener-based detection, URL-based
-    // detection, retry timing) all failed to restore focus to Gecko
-    // afterwards. That's a real regression (breaks the "back to Gecko on
-    // close" behaviour every other Chameleon link has), so reverted back to
-    // chrome.tabs.create and kept the harmless close-prompt. Do not retry the
-    // window.open() approach without being able to test IE-mode directly -
-    // the refocus appears to happen at the Win32 level inside iexplore.exe,
-    // not through anything chrome.tabs/chrome.windows can see or override.
+    // Creating this from inside the IE-mode page suppresses the prompt, but
+    // Trident then refocuses Chameleon when the popup closes. Keep the harmless
+    // close prompt rather than breaking the normal return-to-Gecko behavior.
     return {
       label: "FluidBalance",
       kind: "newTab",
@@ -253,7 +244,7 @@ async function buildChameleonTarget(sourceUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// Native messaging remains for department-state polling and Namer launch.
+// Native messaging remains only for Namer launch.
 // ---------------------------------------------------------------------------
 
 const NATIVE_HOST_NAME = "com.jumper.native_host";
@@ -270,8 +261,7 @@ function matchPatientSignal(sourceUrl) {
   };
 }
 
-// Opens a short-lived native messaging port for one-shot actions such as
-// launching Namer. Department polling uses its own long-lived port below.
+// Opens a short-lived native messaging port to launch Namer.
 function sendNativeCommand(message, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -312,64 +302,6 @@ function sendNativeCommand(message, timeoutMs = 5000) {
 }
 
 // ---------------------------------------------------------------------------
-// "מחלקות" tab detection -> switch to Gecko tab (simple multi-tab approach,
-// no in-place overlay). Mirrors Jumper's HandlePatientsListOpen/ShowGecko
-// trigger (Chameleon.cs), but since MV3 service workers can't receive
-// unsolicited pushes from the BHO reliably, we poll the BHO's live state via
-// the native host's "queryDeptTab" command instead. A single long-lived
-// native messaging port is kept open for the polling loop (not one-shot like
-// sendNativeCommand above) - this also keeps the service worker alive
-// per Chrome's documented long-lived-connection keepalive behavior.
-// ---------------------------------------------------------------------------
-
-const DEPT_TAB_POLL_MS = 1500;
-let deptTabPort = null;
-let deptTabPollTimer = null;
-let deptTabLastActive = false;
-
-function ensureDeptTabPort() {
-  if (deptTabPort) return deptTabPort;
-  try {
-    deptTabPort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
-  } catch (err) {
-    appendLog({ event: "deptTab.connectNative.failed", error: String(err) });
-    deptTabPort = null;
-    return null;
-  }
-
-  deptTabPort.onMessage.addListener((response) => {
-    if (response && response.ok) {
-      handleDeptTabState(!!response.active);
-    }
-  });
-
-  deptTabPort.onDisconnect.addListener(() => {
-    const err = chrome.runtime.lastError;
-    appendLog({ event: "deptTab.port.disconnected", error: err ? err.message : null });
-    deptTabPort = null; // recreated lazily on the next poll tick
-  });
-
-  return deptTabPort;
-}
-
-// How the modern app is surfaced when Chameleon's "מחלקות" tab becomes active.
-//   "tab"       - focus/open a normal Gecko tab (default, proven)
-//   "sidePanel" - show Gecko in the Edge side panel, side by side with the
-//                 IE-mode Chameleon tab. The side panel is browser UI, so
-//                 Chromium renders it even next to a Trident-rendered tab -
-//                 unlike the in-page overlay iframe we abandoned earlier.
-const DEFAULT_DISPLAY_MODE = "tab";
-
-async function getDisplayMode() {
-  try {
-    const { geckoDisplayMode } = await chrome.storage.local.get("geckoDisplayMode");
-    return geckoDisplayMode === "sidePanel" ? "sidePanel" : DEFAULT_DISPLAY_MODE;
-  } catch {
-    return DEFAULT_DISPLAY_MODE;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Patient opening uses Enterprise Mode bidirectional cookie sharing to prime
 // Chameleon's ASP session in Chromium, then navigates IE mode to corrected
 // Home/Main parameters. It requires these Enterprise Mode Site List entries:
@@ -393,87 +325,6 @@ function signalUrlToChameleonUrl(sourceUrl) {
     return u.toString();
   } catch {
     return null;
-  }
-}
-
-async function handleDeptTabState(active) {
-  if (active && !deptTabLastActive) {
-    appendLog({ event: "deptTab.transition", to: active });
-    // Overlay-iframe approach (BHO SetGeckoOverlayVisible) was tried and
-    // reverted - an iframe inside an IE-mode page's DOM is rendered by the
-    // legacy Trident engine, not Chromium, so the modern app can't run there
-    // (confirmed blank + old IE context menu on right-click). Back to the
-    // proven tab-switch approach as the primary/default behavior.
-    const mode = await getDisplayMode();
-    if (mode === "sidePanel") {
-      const opened = await openGeckoSidePanel();
-      // chrome.sidePanel.open() requires a user gesture, and this poll tick is
-      // not one, so it throws unless the panel is already open. Falling back
-      // keeps the transition useful instead of silently doing nothing; the
-      // popup's "Open side panel now" button is a real gesture and is what
-      // gets the panel open in the first place.
-      if (!opened) await bringGeckoTabToFront();
-    } else {
-      await bringGeckoTabToFront();
-    }
-  }
-  deptTabLastActive = active;
-}
-
-// Returns true only if the panel was actually opened. Never throws.
-async function openGeckoSidePanel(windowId) {
-  try {
-    if (!chrome.sidePanel || !chrome.sidePanel.open) {
-      appendLog({ event: "sidePanel.unsupported" });
-      return false;
-    }
-    let wid = windowId;
-    if (wid === undefined) {
-      const win = await chrome.windows.getLastFocused();
-      wid = win.id;
-    }
-    await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
-    await chrome.sidePanel.open({ windowId: wid });
-    appendLog({ event: "sidePanel.opened", windowId: wid });
-    return true;
-  } catch (err) {
-    // Almost always "`sidePanel.open()` may only be called in response to a
-    // user gesture" - expected on the polling path, so log at info level.
-    appendLog({ event: "sidePanel.open.failed", error: String(err) });
-    return false;
-  }
-}
-
-async function setDisplayMode(mode) {
-  return wrap(async () => {
-    const value = mode === "sidePanel" ? "sidePanel" : "tab";
-    await chrome.storage.local.set({ geckoDisplayMode: value });
-    // Let the panel be opened by clicking the extension's toolbar icon too,
-    // which is the only gesture-free way Chromium will open it for us.
-    try {
-      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
-    } catch { /* not fatal - toolbar icon keeps opening the popup */ }
-    appendLog({ event: "displayMode.set", mode: value });
-    return { geckoDisplayMode: value };
-  });
-}
-
-async function bringGeckoTabToFront() {
-  try {
-    const { modernAppUrl } = await chrome.storage.local.get("modernAppUrl");
-    const url = modernAppUrl || MODERN_APP_URL;
-    const tabs = await chrome.tabs.query({ url: "https://inextdata.tasmc.corp/*" });
-    let geckoTab = tabs[0];
-    if (!geckoTab) {
-      geckoTab = await chrome.tabs.create({ url });
-      appendLog({ event: "deptTab.openedGeckoTab", tabId: geckoTab.id, url });
-    } else {
-      await chrome.tabs.update(geckoTab.id, { active: true });
-      appendLog({ event: "deptTab.focusedGeckoTab", tabId: geckoTab.id });
-    }
-    await chrome.windows.update(geckoTab.windowId, { focused: true });
-  } catch (err) {
-    appendLog({ event: "deptTab.bringToFront.failed", error: String(err) });
   }
 }
 
@@ -505,11 +356,8 @@ function isInsideGeckoSection(tabUrl, deptUrl) {
 
 // Finds any existing gecko (inextdata) tab and navigates it to `url`, or
 // creates one if none exists - used by the side panel's department buttons.
-// Deliberately enforces a SINGLE gecko tab: unlike bringGeckoTabToFront
-// (which only focuses the default URL), this one re-navigates whatever gecko
-// tab already exists rather than opening a second one for a different path -
-// UNLESS it's already showing that section (or a subpage of it), in which
-// case it's just focused as-is so in-page state/navigation isn't discarded.
+// Deliberately enforces a single Gecko tab. It re-navigates an existing Gecko
+// tab unless that tab is already showing the requested section or a subpage.
 async function openGeckoTabWithUrl(url) {
   const tabs = await chrome.tabs.query({ url: "https://inextdata.tasmc.corp/*" });
   let geckoTab = tabs[0];
@@ -526,25 +374,6 @@ async function openGeckoTabWithUrl(url) {
   await chrome.windows.update(geckoTab.windowId, { focused: true });
   return geckoTab;
 }
-
-function pollDeptTabOnce() {
-  const port = ensureDeptTabPort();
-  if (!port) return;
-  try {
-    port.postMessage({ type: "queryDeptTab" });
-  } catch (err) {
-    appendLog({ event: "deptTab.postMessage.failed", error: String(err) });
-    deptTabPort = null;
-  }
-}
-
-function startDeptTabPolling() {
-  if (deptTabPollTimer) return;
-  deptTabPollTimer = setInterval(pollDeptTabOnce, DEPT_TAB_POLL_MS);
-  pollDeptTabOnce();
-}
-
-startDeptTabPolling();
 
 function normalizeSector(value) {
   const sector = String(value || "").trim();
@@ -903,11 +732,9 @@ async function setHospitalId(hospitalId) {
 
 async function getSettings() {
   return wrap(async () => {
-    const { hospitalId, geckoDisplayMode } =
-      await chrome.storage.local.get(["hospitalId", "geckoDisplayMode"]);
+    const { hospitalId } = await chrome.storage.local.get("hospitalId");
     return {
       hospitalId: hospitalId || "101",
-      geckoDisplayMode: geckoDisplayMode === "sidePanel" ? "sidePanel" : "tab",
     };
   });
 }
@@ -948,9 +775,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       case "getSettings":
         sendResponse(await getSettings());
-        break;
-      case "setDisplayMode":
-        sendResponse(await setDisplayMode(msg.mode));
         break;
       case "probeMedOrderSector":
         sendResponse(await probeMedOrderSector());

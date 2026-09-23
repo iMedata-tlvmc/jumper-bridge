@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Jumper Bridge (POC)",
-  "version": "0.9.1",
-  "description": "Bridges the modern Gecko web app to the legacy Chameleon EHR using shared-session navigation, department detection, and Namer integration. Can also show Gecko in a side panel.",
+  "version": "1.0.0",
+  "description": "Bridges the modern Gecko web app to Chameleon using shared-session navigation and Namer integration. Can also show Gecko in a side panel.",
   "permissions": [
     "tabs",
     "webNavigation",
@@ -17,8 +17,7 @@
     "https://dev-inextdata.tasmc.corp/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
-    "http://localhost:5173/*",
-    "internetexplorertabhost://*/*"
+    "http://localhost:5173/*"
   ],
   "background": {
     "service_worker": "background.js"
