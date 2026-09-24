@@ -17,6 +17,31 @@ into the configured site list.
 Cookie sharing is not retroactive. After policy installation, restart Edge and
 perform a complete Chameleon logout/login.
 
+The installer writes this policy to `HKCU:\Software\Policies\Microsoft\Edge`,
+which can be actively managed (and write-locked) by a domain GPO. On such a
+machine the installer needs to be rerun elevated, and the write can be
+silently reverted by the next Group Policy refresh. See "Security review"
+below and `docs/handoff.md` Troubleshooting for the observed failure mode and
+the durable fix (add the shared-cookie entries to the centrally hosted site
+list instead of relying on a per-machine local override).
+
+## Open a plain login page when the shared session is invalid
+
+When patient opening detects the shared Chameleon session is not
+authenticated, it opens `/Chameleon/Account/LogOn` and asks the user to click
+the Gecko link again after logging in, rather than failing silently.
+
+An attempt was made to instead navigate straight to `login.asp` with the raw
+signal's `quickOpen` query params (`Id`/`PatientNum`/`MedicalRecord`/`Unit`)
+attached, hoping Chameleon's own login flow would redirect into the patient
+afterward the way it does when a patient link is clicked from inside a
+logged-out Chameleon tab. This did not work: `login.asp` does not accept that
+parameter shape and returned "מטופל לא נמצא" (patient not found). Only the
+corrected `Home/Main` URL built once the session is confirmed valid (see
+below) accepts `QuickOpen`. Reproducing that translation ourselves before a
+successful login was not pursued further; requiring one extra click after
+login is a small, reliable cost.
+
 ## Keep patient and Med Orders extension-only
 
 Patient opening primes QuickOpen and navigates to corrected `Home/Main`

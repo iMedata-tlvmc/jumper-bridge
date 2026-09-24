@@ -110,6 +110,19 @@ The installer also removes the retired Jumper BHO registry entries if found.
 That upgrade cleanup requires one elevation prompt; normal installs and reruns
 do not.
 
+**The shared-cookie policy write can require admin rights.** Step 3
+(`Install-SharedCookieSiteList`) writes to
+`HKCU:\Software\Policies\Microsoft\Edge`. On a domain-joined machine where
+that key is actively managed by Group Policy, Windows can lock it against
+direct writes even from the owning user, and the install fails with
+`Set-ItemProperty : Requested registry access is not allowed.` If that
+happens, rerun the installer from an elevated ("Run as Administrator")
+PowerShell. Because Group Policy can re-apply/re-lock the key on its own
+refresh cycle (background refresh, logon, or reboot), this may need to be
+repeated if the site list silently reverts later. The durable fix is asking
+IT to add the 3 `<shared-cookie>` entries directly to the centrally hosted
+Enterprise Mode Site List so no local override is needed at all.
+
 Load or reload `C:\Dev\jumper-bridge\edge` in `edge://extensions`.
 
 ## Troubleshooting
@@ -117,6 +130,14 @@ Load or reload `C:\Dev\jumper-bridge\edge` in `edge://extensions`.
 **Patient or Med Orders authentication fails:** open **Diagnostics** from the
 popup and run **Probe sector**. Restart Edge and perform a full Chameleon
 logout/login if no valid sector is returned.
+
+**Patient link keeps opening the Chameleon login page, even right after
+logging in:** cookie sharing is not retroactive - only cookies set *after*
+the shared-cookie policy is active get synced into Chromium's jar. If the
+site list was just (re)installed, or Edge was just restarted, an old
+Chameleon session cookie from before that point will not work. Fully log out
+of Chameleon and log back in (not just refresh the tab) so a fresh
+`.CHAMELEONAUTH` cookie is set and shared.
 
 **Signals are not intercepted:** reload the Gecko page after reloading the
 extension, because interception scripts are installed at document start.
