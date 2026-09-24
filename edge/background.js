@@ -547,23 +547,23 @@ async function routePatientOpenViaSharedSession(sourceUrl, patient) {
       cache: "no-store",
     });
     if (sessionCheck.status !== 200) {
-      // Not logged in (or the shared-cookie policy isn't active). primeUrl is
-      // Chameleon's own login.asp with the quickOpen/patient params already
-      // attached, so navigating straight to it lets Chameleon's normal
-      // login -> redirect-into-patient flow handle it, exactly like clicking
-      // a patient link from inside a logged-out Chameleon tab. No retry is
-      // needed on our side once the user logs in.
-      const tab = await openOrNavigateChameleonTab(primeUrl);
+      // Not logged in (or the shared-cookie policy isn't active). login.asp's
+      // quickOpen params turned out NOT to accept the raw signal shape
+      // (Id/PatientNum/MedicalRecord/Unit) - navigating straight there with
+      // them attached produced "מטופל לא נמצא" instead of continuing into the
+      // patient. Only the corrected Home/Main URL built below accepts
+      // QuickOpen, so open a plain login page and ask the user to click the
+      // Gecko link again once logged in.
+      const tab = await openOrNavigateChameleonTab(`${CHAMELEON_BASE_URL}/Chameleon/Account/LogOn`);
       appendLog({
         event: "patientOpen.sharedSession.loginRequired",
         tabId: tab.id,
-        primeUrl: redactUrl(primeUrl),
       });
       return {
-        ok: true,
+        ok: false,
         mode: "loginRequired",
         tabId: tab.id,
-        message: "Opened Chameleon login. Log in and it will continue to the patient.",
+        error: "Opened Chameleon login. Log in, then click the patient link again.",
       };
     }
 
