@@ -516,6 +516,22 @@ async function probeMedOrderSector() {
   });
 }
 
+// Finds (or creates) the Chameleon tab and navigates + focuses it to the
+// given URL. Shared by the login-required path above and other callers that
+// need to force navigation rather than just focus an existing tab.
+async function openOrNavigateChameleonTab(url) {
+  const tabs = await chrome.tabs.query({ url: `${CHAMELEON_BASE_URL}/*` });
+  let chameleonTab = tabs[0];
+  if (!chameleonTab) {
+    chameleonTab = await createTabInNormalWindow({ url });
+  } else {
+    await chrome.tabs.update(chameleonTab.id, { url });
+  }
+  await chrome.tabs.update(chameleonTab.id, { active: true });
+  await chrome.windows.update(chameleonTab.windowId, { focused: true });
+  return chameleonTab;
+}
+
 async function routePatientOpenViaSharedSession(sourceUrl, patient) {
   const primeUrl = signalUrlToChameleonUrl(sourceUrl);
   if (!primeUrl) {
@@ -531,9 +547,24 @@ async function routePatientOpenViaSharedSession(sourceUrl, patient) {
       cache: "no-store",
     });
     if (sessionCheck.status !== 200) {
-      throw new Error(
-        "Shared Chameleon session unavailable. Check Enterprise Mode shared-cookie policy and log in."
-      );
+      // Not logged in (or the shared-cookie policy isn't active). primeUrl is
+      // Chameleon's own login.asp with the quickOpen/patient params already
+      // attached, so navigating straight to it lets Chameleon's normal
+      // login -> redirect-into-patient flow handle it, exactly like clicking
+      // a patient link from inside a logged-out Chameleon tab. No retry is
+      // needed on our side once the user logs in.
+      const tab = await openOrNavigateChameleonTab(primeUrl);
+      appendLog({
+        event: "patientOpen.sharedSession.loginRequired",
+        tabId: tab.id,
+        primeUrl: redactUrl(primeUrl),
+      });
+      return {
+        ok: true,
+        mode: "loginRequired",
+        tabId: tab.id,
+        message: "Opened Chameleon login. Log in and it will continue to the patient.",
+      };
     }
 
     const primeResponse = await fetch(primeUrl, {
